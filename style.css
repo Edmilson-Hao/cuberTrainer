@@ -868,3 +868,55 @@ select {
         transform: translateY(-20px) scale(0.9);
     }
 }
+
+/* 🎬 Splash Screen Premium */
+#splash-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: #0b0b0cc4; /* Fundo escuro combinando com o tema */
+    backdrop-filter: blur(8px);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    z-index: 99999; /* Garante que fica por cima de absolutamente tudo */
+    transition: opacity 0.5s ease, visibility 0.5s ease;
+}
+
+/* Tamanho controlado da imagem para não distorcer */
+.splash-logo {
+    max-width: 220px;
+    height: auto;
+    margin-bottom: 24px;
+    animation: pulseLogo 2s infinite ease-in-out;
+}
+
+/* Indicador de carregamento minimalista abaixo da imagem */
+.splash-loader {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(255, 255, 255, 0.05);
+    border-radius: 50%;
+    border-top-color: var(--accent); /* Usa a cor ciano/principal do seu app */
+    animation: spinLoader 0.8s linear infinite;
+}
+
+/* Classes de controle via JS */
+#splash-screen.fade-out {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+/* 🔄 Animações da Splash */
+@keyframes spinLoader {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes pulseLogo {
+    0%, 100% { transform: scale(1); opacity: 0.9; }
+    50% { transform: scale(1.04); opacity: 1; }
+}
