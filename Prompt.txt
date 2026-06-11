@@ -1,0 +1,24 @@
+Nome: Cuber Trainer
+Função:
+	1 - Estudar casos de F2L, OLL e PLL do método CFOP de cubo mágico em formato de flashcards e sessões de estudo;
+	2 - Cronômetro com histórico, lista dos 12 melhores tempos e ao05, ao12, ao50 e ao100 bem como média móvel dos tempos;
+	3 - Deve ter barra de domínio (da porcentagem de casos)
+	4 - Sistema de Streak
+Tecnologia:
+	1 - HTML, CSS e JS simples, puro, vanilla sem biblioteca e frameworks
+	2 - Arquivos separados e com estrutura totalmente moderna, function oriented e modular
+	3 - Deve ser PWA instalável e totalmente funcional de forma offline
+Arquivos de imagem ficam em uma pasta de nome "imagens" na pasta raiz, dentro uma pasta f2l, uma pasta oll e uma pasta oll com todos os casos, vide imagem de anexo
+Na pasta raiz ha um arquivo casos.txt com os algoritimos, em anexo
+----------------------------------------------------------------------------------------------------------------------------------------------
+- Tela de lista de casos
+	* Seleciona F2L, OLL ou PLL -> Mostra lista dos casos com e ao clicar em um caso mostrar seus algorítimos;
+	* Botão "Aprendi" marca o caso como disponível na lista de casos para estudo
+- Tela gerar lista de estudo
+	* Sessão de 5m ou 10m gerada com uma lista de casos gerados de acordo com os dados do flashcard;
+	* Ao executar o caso o usuário aperta botão "Acertei" ou "Errei" para carregar o próximo e esse dado será usado para futuros calculos ao gerar sessão de estudo;
+	* O usuário marca check button se quer que a lista gere F2L, PLL e OLL na lista (pode ser gerado lista de 1, 2 ou as 3 opções);
+	* Ao clicar na foto do caso o sistema mostra o algorítimo.
+- Tela cronômeto
+- Tela Histórico
+	* Todos os 12 melhores tempos e os dados de media móvel/gráficos
