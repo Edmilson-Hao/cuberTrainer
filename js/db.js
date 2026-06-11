@@ -135,3 +135,34 @@ export function deleteFromStore(storeName, id) {
         request.onerror = (e) => reject(e.target.error);
     });
 }
+
+// Remove completamente o banco de dados do navegador
+// Função para resetar completamente o CuberTrainerDB
+export function clearAllDatabase() {
+    return new Promise((resolve, reject) => {
+        // 🔥 PASSO CRÍTICO: Fecha a conexão ativa para o navegador não bloquear a exclusão.
+        // Se a sua variável global de conexão tiver outro nome (como 'database' ou 'localDb'), 
+        // mude o termo 'db' abaixo para o nome dela.
+        if (typeof db !== 'undefined' && db) {
+            db.close(); 
+        }
+
+        // 🎯 Alvo corrigido com o nome exato do seu banco de dados
+        const req = indexedDB.deleteDatabase('CuberTrainerDB'); 
+        
+        req.onsuccess = () => {
+            console.log("Banco CuberTrainerDB deletado com sucesso.");
+            resolve();
+        };
+        req.onerror = (err) => {
+            console.error("Erro ao deletar o banco:", err);
+            reject(err);
+        };
+        req.onblocked = () => {
+            console.warn("A exclusão foi bloqueada por uma aba ou conexão aberta. Limpando storages de segurança.");
+            localStorage.clear();
+            sessionStorage.clear();
+            resolve();
+        };
+    });
+}

@@ -2,7 +2,7 @@ const CACHE_NAME = 'cuber-v1';
 const ASSETS = [
   './',
   './index.html',
-  './css/style.css', // Corrigido de /style.css para ./css/style.css
+  './style.css', // Corrigido de /style.css para ./css/style.css
   './js/app.js',
   './js/db.js',
   './js/data.js',
@@ -19,8 +19,14 @@ const ASSETS = [
 self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      // Usar uma estratégia de controle de erros para evitar travar o SW se um arquivo falhar
-      return cache.addAll(ASSETS).catch(err => console.error('Erro no pre-cache:', err));
+      // Em vez de dar addAll direto, testamos os arquivos um por um
+      return Promise.all(
+        ASSETS.map((url) => {
+          return cache.add(url).catch((err) => {
+            console.error(`❌ Falha ao colocar no cache o arquivo: ${url}`, err);
+          });
+        })
+      );
     })
   );
 });

@@ -6,8 +6,13 @@ let running = false;
 let isInspecting = false;
 let inspectionTime = 15;
 let inspectionInterval = null;
-let useInspection = true;
+
+// 📌 MODIFICAÇÃO 3: Inspeção vem DESATIVADA (false) por padrão agora
+let useInspection = false; 
+
 let lastSolveId = null; 
+let spacePressed = false; // Controle para evitar disparos contínuos no teclado
+let touchStartTimer = null; // Controle de tempo para o clique e segura no mobile
 
 export async function initTimerScreen() {
     const container = document.getElementById('app-container');
@@ -49,6 +54,158 @@ export async function initTimerScreen() {
     generateScramble();
 }
 
+function setupTimerEvents() {
+    // Remove listeners antigos para evitar duplicações de memória
+    window.removeEventListener('keydown', handleKeyDown);
+    window.removeEventListener('keyup', handleKeyUp);
+    
+    // 💻 Listeners para Computador (Teclado)
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    // 📱 Listeners para Celular (Touch)
+    const display = document.getElementById('timer-display');
+    if (display) {
+        display.removeEventListener('touchstart', handleTouchStart);
+        display.removeEventListener('touchend', handleTouchEnd);
+        
+        display.addEventListener('touchstart', handleTouchStart, { passive: false });
+        display.addEventListener('touchend', handleTouchEnd);
+    }
+}
+
+// 💻 LOGICA DE TECLADO (PC)
+function handleKeyDown(e) {
+    if (e.code !== 'Space' || document.activeElement.tagName === 'BUTTON') return;
+    e.preventDefault();
+
+    if (running) {
+        // Se já está rodando, qualquer toque para o cronômetro imediatamente
+        stopTimerLogic();
+    } else if (!spacePressed && !isInspecting) {
+        // Se está parado, muda de cor indicando que está pronto para soltar
+        spacePressed = true;
+        const display = document.getElementById('timer-display');
+        if (display) display.classList.add('ready-to-trigger'); 
+    }
+}
+
+function handleKeyUp(e) {
+    if (e.code !== 'Space' || document.activeElement.tagName === 'BUTTON') return;
+    e.preventDefault();
+
+    if (spacePressed) {
+        spacePressed = false;
+        const display = document.getElementById('timer-display');
+        if (display) display.classList.remove('ready-to-trigger');
+        
+        // Só inicia o tempo quando SOLTAR a barra de espaço (Padrão de campeonatos)
+        startTimerLogic();
+    }
+}
+
+// 📱 LÓGICA DE TOQUE (CELULAR - SEGURAR E SOLTAR)
+function handleTouchStart(e) {
+    if (document.activeElement.tagName === 'BUTTON') return;
+    e.preventDefault();
+
+    if (running) {
+        stopTimerLogic();
+    } else if (!isInspecting) {
+        const display = document.getElementById('timer-display');
+        if (display) display.classList.add('ready-to-trigger');
+        
+        // Exige segurar por pelo menos 150ms para simular o Stackmat real
+        touchStartTimer = setTimeout(() => {
+            touchStartTimer = true; 
+        }, 150);
+    }
+}
+
+function handleTouchEnd(e) {
+    if (running || isInspecting) return;
+    
+    const display = document.getElementById('timer-display');
+    if (display) display.classList.remove('ready-to-trigger');
+
+    if (touchStartTimer === true) {
+        // Soltou após o tempo mínimo de retenção
+        startTimerLogic();
+    } else if (touchStartTimer) {
+        // Soltou rápido demais antes dos 150ms
+        clearTimeout(touchStartTimer);
+    }
+    touchStartTimer = null;
+}
+
+// Inicializa a contagem ou inspeção
+function startTimerLogic() {
+    const display = document.getElementById('timer-display');
+    const wrapper = document.querySelector('.timer-wrapper');
+    const header = document.querySelector('header');
+    const actionsPanel = document.getElementById('quick-actions-panel');
+
+    if (actionsPanel) actionsPanel.classList.add('hidden');
+
+    if (useInspection && !isInspecting) {
+        isInspecting = true;
+        inspectionTime = 15;
+        display.classList.add('inspecting');
+        display.textContent = inspectionTime;
+        
+        inspectionInterval = setInterval(() => {
+            inspectionTime--;
+            display.textContent = inspectionTime;
+            if (inspectionTime <= 0) {
+                clearInterval(inspectionInterval);
+                display.textContent = "DNF";
+                isInspecting = false;
+                saveTime(0, true); // Salva como DNF automaticamente
+            }
+        }, 1000);
+    } else {
+        if (isInspecting) {
+            clearInterval(inspectionInterval);
+            isInspecting = false;
+        }
+        
+        running = true;
+        if (wrapper) wrapper.classList.add('running-mode');
+        if (header) {
+            header.style.opacity = '0';
+            header.style.pointerEvents = 'none';
+        }
+        display.classList.remove('inspecting');
+        display.classList.add('running');
+        startTime = Date.now();
+        timerInterval = setInterval(() => {
+            display.textContent = ((Date.now() - startTime) / 1000).toFixed(2);
+        }, 10);
+    }
+}
+
+// Interrompe o cronômetro e salva o resultado
+function stopTimerLogic() {
+    clearInterval(timerInterval);
+    running = false;
+    
+    const display = document.getElementById('timer-display');
+    const wrapper = document.querySelector('.timer-wrapper');
+    const header = document.querySelector('header');
+    
+    if (wrapper) wrapper.classList.remove('running-mode');
+    if (header) {
+        header.style.opacity = '1';
+        header.style.pointerEvents = 'auto';
+    }
+    
+    if (display) display.classList.remove('running');
+    const finalTime = parseFloat(((Date.now() - startTime) / 1000).toFixed(2));
+    saveTime(finalTime);
+    generateScramble();
+}
+
+// ... O resto das suas funções (saveTime, updateLiveAverages, etc.) continuam iguais abaixo ...
 export function clearTimerState() {
     clearInterval(timerInterval);
     clearInterval(inspectionInterval);
@@ -80,17 +237,6 @@ function generateScramble() {
     }
     const elem = document.getElementById('scramble-generator');
     if (elem) elem.textContent = scramble.join(" ");
-}
-
-function setupTimerEvents() {
-    window.removeEventListener('keydown', handleTrigger);
-    window.addEventListener('keydown', handleTrigger);
-
-    const display = document.getElementById('timer-display');
-    if (display) {
-        display.removeEventListener('touchstart', handleTrigger);
-        display.addEventListener('touchstart', handleTrigger);
-    }
 }
 
 function handleTrigger(e) {

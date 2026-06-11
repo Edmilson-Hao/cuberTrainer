@@ -1,4 +1,4 @@
-import { getAllFromStore, saveToStore, deleteFromStore } from '../db.js';
+import { getAllFromStore, saveToStore, deleteFromStore, clearAllDatabase } from '../db.js';
 
 export async function initHistoryScreen() {
     const container = document.getElementById('app-container');
@@ -23,7 +23,6 @@ export async function initHistoryScreen() {
                 `).join('') || '<p style="color: var(--text-muted); grid-column: span 4;">Nenhum tempo válido registrado.</p>'}
             </div>
             
-            <!-- 📁 Sistema de Backup Data JSON -->
             <div class="backup-actions-wrapper">
                 <div class="backup-buttons">
                     <button id="btn-export-json" class="btn-action-small">📤 Exportar JSON</button>
@@ -61,6 +60,13 @@ export async function initHistoryScreen() {
                     </tbody>
                 </table>
             </div>
+
+            <div class="danger-zone-container">
+                <button id="btn-reset-system" class="btn-reset-danger">
+                    <span class="icon">⚠️</span> Resetar Todos os Dados
+                </button>
+                <p class="danger-text">Isso apagará permanentemente todo o histórico, recordes e forçará a limpeza de caches do celular.</p>
+            </div>
         </div>
     `;
 
@@ -69,7 +75,7 @@ export async function initHistoryScreen() {
     document.getElementById('btn-import-json').addEventListener('click', toggleImportZone);
     document.getElementById('btn-confirm-import').addEventListener('click', importData);
 
-    // Delegação de eventos para exclusão de tempos
+    // Delegação de eventos para exclusão de tempos (Lixeira)
     const tableBody = document.getElementById('history-table-body');
     if (tableBody) {
         tableBody.addEventListener('click', async (e) => {
@@ -82,26 +88,103 @@ export async function initHistoryScreen() {
             }
         });
     }
+
+    // Configuração do Evento do Botão de Reset Absoluto
+    const btnReset = document.getElementById('btn-reset-system');
+    if (btnReset) {
+        btnReset.addEventListener('click', async () => {
+            const confirmFirst = confirm("ATENÇÃO: Você perderá todos os seus tempos e recordes permanentemente. Deseja continuar?");
+            if (confirmFirst) {
+                const confirmSecond = confirm("Tem certeza absoluta? Esta ação NÃO pode ser desfeita.");
+                if (confirmSecond) {
+                    try {
+                        // Deleta o banco de dados de tempos e estados
+                        await clearAllDatabase();
+                        
+                        localStorage.clear();
+                        sessionStorage.clear();
+
+                        // Desinstala os service workers ativos para quebrar o cache de imagens antigo
+                        if ('serviceWorker' in navigator) {
+                            const registrations = await navigator.serviceWorker.getRegistrations();
+                            for (let registration of registrations) {
+                                await registration.unregister();
+                            }
+                        }
+                        
+                        // Deleta os storages de cache locais mapeados no navegador
+                        if ('caches' in window) {
+                            const cacheNames = await caches.keys();
+                            for (let name of cacheNames) {
+                                await caches.delete(name);
+                            }
+                        }
+
+                        alert("Sistema resetado com sucesso! O aplicativo será reiniciado totalmente limpo.");
+                        window.location.reload(true);
+
+                    } catch (error) {
+                        console.error("Erro ao resetar o sistema:", error);
+                        alert("Ocorreu um erro ao limpar automaticamente. Limpe os dados de navegação do celular manualmente.");
+                    }
+                }
+            }
+        });
+    }
 }
 
-// 📤 Função para exportar e copiar automaticamente o JSON
-async function exportData(solves) {
-    const statusMsg = document.getElementById('backup-status-msg');
-    if (solves.length === 0) {
-        showStatus('Nenhum dado encontrado para exportar.', 'error');
-        return;
-    }
+// Mantenha suas funções auxiliares (exportData, toggleImportZone, importData, showStatus) declaradas logo abaixo no arquivo!
+async function exportData(allSolves) {
+    // Tenta buscar o progresso dos casos aprendidos do banco
+    const allCasesProgess = await getAllFromStore('cases') || []; 
+    
+    const backupPayload = {
+        times: allSolves,
+        casesProgress: allCasesProgess,
+        exportedAt: new Date().toISOString()
+    };
+    
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupPayload));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `cuber_trainer_backup_${Date.now()}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+}
 
+// Altere a função importData correspondente para ler essa nova estrutura:
+async function importData() {
+    const rawData = document.getElementById('txt-import-data').value;
+    const statusMsg = document.getElementById('backup-status-msg');
+    
     try {
-        // Limpa os IDs autoincrementados originais para evitar colisões ao reimportar futuramente
-        const cleanData = solves.map(({ time, isDNF, date, scramble }) => ({ time, isDNF, date, scramble }));
-        const jsonString = JSON.stringify(cleanData, null, 2);
+        const parsed = JSON.parse(rawData);
         
-        await navigator.clipboard.writeText(jsonString);
-        showStatus('🚀 JSON copiado para a área de transferência!', 'success');
+        // Valida se o formato do JSON importado contém as tabelas corretas
+        if (parsed.times && Array.isArray(parsed.times)) {
+            // Importa o histórico de tempos
+            for (let solve of parsed.times) {
+                delete solve.id; // Remove id antigo para o IndexedDB auto-incrementar sem colisões
+                await saveToStore('times', solve);
+            }
+            
+            // Importa o progresso dos algoritmos (se existir no arquivo de backup)
+            if (parsed.casesProgress && Array.isArray(parsed.casesProgress)) {
+                for (let caseData of parsed.casesProgress) {
+                    await saveToStore('cases', caseData);
+                }
+            }
+            
+            statusMsg.textContent = "✅ Dados importados com sucesso! Atualizando...";
+            statusMsg.style.color = "#00ff66";
+            setTimeout(() => window.location.reload(), 1000);
+        } else {
+            throw new Error("Formato inválido");
+        }
     } catch (err) {
-        console.error('Falha ao copiar dados: ', err);
-        showStatus('Erro ao copiar dados automaticamente.', 'error');
+        statusMsg.textContent = "❌ Código de backup inválido ou corrompido.";
+        statusMsg.style.color = "#ff4848";
     }
 }
 
@@ -110,43 +193,6 @@ function toggleImportZone() {
     zone.classList.toggle('hidden');
     if (!zone.classList.contains('hidden')) {
         document.getElementById('txt-import-data').focus();
-    }
-}
-
-// 📥 Função para ler, validar e processar o JSON injetado
-async function importData() {
-    const jsonInput = document.getElementById('txt-import-data').value.trim();
-    
-    if (!jsonInput) {
-        showStatus('Por favor, cole um código JSON válido.', 'error');
-        return;
-    }
-
-    try {
-        const parsedData = JSON.parse(jsonInput);
-        
-        if (!Array.isArray(parsedData)) {
-            throw new Error('O formato do JSON precisa ser uma lista de tempos.');
-        }
-
-        if (confirm(`Aviso: Foram encontrados ${parsedData.length} tempos. Deseja adicioná-los ao banco de dados atual?`)) {
-            for (const solve of parsedData) {
-                // Validação básica de propriedades obrigatórias do objeto para prevenir corrupção
-                if (typeof solve.time === 'number' && solve.date) {
-                    await saveToStore('times', {
-                        time: solve.time,
-                        isDNF: !!solve.isDNF,
-                        date: solve.date,
-                        scramble: solve.scramble || ''
-                    });
-                }
-            }
-            showStatus('🎉 Dados importados e mesclados com sucesso!', 'success');
-            setTimeout(() => initHistoryScreen(), 1500);
-        }
-    } catch (err) {
-        console.error('Erro de importação:', err);
-        showStatus('Falha ao processar o JSON. Verifique a formatação do texto colado.', 'error');
     }
 }
 

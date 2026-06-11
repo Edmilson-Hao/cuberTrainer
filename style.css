@@ -869,39 +869,120 @@ select {
     }
 }
 
-/* 🎬 Splash Screen Premium */
+/* 🎬 Splash Screen Totalmente Expandida */
 #splash-screen {
     position: fixed;
     top: 0;
     left: 0;
     width: 100vw;
     height: 100vh;
-    background-color: #0b0b0cc4; /* Fundo escuro combinando com o tema */
-    backdrop-filter: blur(8px);
+    background-color: #0b0b0c;
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    z-index: 99999; /* Garante que fica por cima de absolutamente tudo */
-    transition: opacity 0.5s ease, visibility 0.5s ease;
+    z-index: 99999;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+    
+    /* Garante que nenhuma margem ou preenchimento do app herde aqui */
+    margin: 0 !important;
+    padding: 0 !important;
+    box-sizing: border-box;
 }
 
-/* Tamanho controlado da imagem para não distorcer */
+/* Força a imagem a preencher 100% do display do celular */
 .splash-logo {
-    max-width: 220px;
-    height: auto;
-    margin-bottom: 24px;
-    animation: pulseLogo 2s infinite ease-in-out;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100vw !important;
+    height: 100vh !important;
+    /* O 'cover' faz a imagem cobrir a tela inteira se adaptando a qualquer proporção de tela */
+    object-fit: cover; 
+    margin: 0 !important;
+    padding: 0 !important;
 }
 
-/* Indicador de carregamento minimalista abaixo da imagem */
+/* Reposiciona o loader para ficar flutuando por cima da imagem no rodapé */
 .splash-loader {
-    width: 40px;
-    height: 40px;
-    border: 3px solid rgba(255, 255, 255, 0.05);
+    position: absolute;
+    bottom: 12%; 
+    z-index: 100000; /* Fica acima do splash-logo */
+    width: 44px;
+    height: 44px;
+    border: 3px solid rgba(255, 255, 255, 0.1);
     border-radius: 50%;
-    border-top-color: var(--accent); /* Usa a cor ciano/principal do seu app */
+    border-top-color: var(--accent, #00e5ff);
     animation: spinLoader 0.8s linear infinite;
+}
+
+/* 🏋️ Tela de Treinar / Estudar - Layout do Card Ajustado */
+.trainer-container, 
+.trainer-wrapper, 
+#trainer-screen,
+[class*="trainer"],
+.trainer-wrapper .card-background,
+.trainer-container .case-card,
+.trainer-card,
+.case-card,
+[class*="case-card"],
+[class*="card-background"],
+.flashcard { 
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important; 
+    
+    /* Garante que o card tenha flexbox para empurrar os elementos corretamente */
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+}
+
+/* Força a imagem a esticar na horizontal, mas controlando a altura para o algoritmo aparecer */
+.trainer-wrapper .case-image, 
+.trainer-container img,
+#trainer-screen img,
+.trainer-wrapper img,
+.case-image,
+[class*="case-image"],
+#flashcard-img { 
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 100% !important;
+    height: auto !important;
+    display: block !important;
+    padding: 0 !important;
+    border-radius: 0 !important;
+    box-sizing: border-box !important;
+
+    /* Calibrado para 1.25: Máxima largura lateral sem estourar o fundo */
+    transform: scale(1.25) !important; 
+    
+    /* 🔥 O SEGREDO: Margem negativa embaixo puxa o texto de volta para dentro do card! */
+    margin: 0 auto -10px auto !important; 
+    
+    mix-blend-mode: lighten !important; 
+}
+
+/* Garante que o texto de instrução/algoritmo apareça perfeitamente no rodapé do card */
+#flashcard-alg-target {
+    width: 100% !important;
+    text-align: center !important;
+    font-size: 14px !important;
+    color: var(--text-muted, #a0a0a5);
+    
+    /* Força o texto a ficar por cima e visível após o zoom da imagem */
+    position: relative !important;
+    z-index: 10 !important; 
+    
+    /* Ajuste de espaçamento para não sumir */
+    padding: 12px 15px !important; 
+    margin-top: 15px !important; 
+    background-color: rgba(18, 18, 20, 0.8); /* Um fundinho escuro sutil para dar leitura */
+    box-sizing: border-box !important;
 }
 
 /* Classes de controle via JS */
@@ -919,4 +1000,41 @@ select {
 @keyframes pulseLogo {
     0%, 100% { transform: scale(1); opacity: 0.9; }
     50% { transform: scale(1.04); opacity: 1; }
+}
+
+/* Zona de Perigo - Reset do Sistema */
+.danger-zone-container {
+    margin-top: 40px;
+    padding: 20px;
+    border-radius: var(--radius-md, 8px);
+    background: rgba(255, 72, 72, 0.03);
+    border: 1px dashed rgba(255, 72, 72, 0.2);
+    text-align: center;
+}
+
+.btn-reset-danger {
+    background: transparent;
+    color: #ff4848;
+    border: 1px solid #ff4848;
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: var(--radius-md, 6px);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+}
+
+.btn-reset-danger:hover {
+    background: #ff4848;
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(255, 72, 72, 0.3);
+}
+
+.danger-text {
+    margin: 8px 0 0 0;
+    font-size: 11px;
+    color: var(--text-muted, #888);
 }

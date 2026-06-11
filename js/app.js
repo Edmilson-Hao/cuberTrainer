@@ -51,12 +51,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (error) {
         console.error("Erro crítico na inicialização do aplicativo:", error);
     } finally {
-        // 🏁 Executa sempre: Oculta a Splash Screen de forma suave
+        // 🏁 Oculta a Splash Screen rapidamente para não irritar o usuário
         const splash = document.getElementById('splash-screen');
         if (splash) {
             setTimeout(() => {
                 splash.classList.add('fade-out');
-            }, 1200); 
+            }, 400); // Reduzido de 1200ms para 400ms
         }
     }
 });
