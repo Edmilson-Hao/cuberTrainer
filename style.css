@@ -1038,3 +1038,18 @@ select {
     font-size: 11px;
     color: var(--text-muted, #888);
 }
+
+/* ==========================================================================
+   🎯 FEEDBACKS DE COR DO CRONÔMETRO (ESTILO STACKMAT)
+   ========================================================================== */
+/* 🔴 1. Ao tocar/segurar: Zera o número e fica Vermelho */
+.timer-big.holding-down {
+    color: #ff3b30 !important; /* Vermelho vivo de aviso */
+    transition: color 0.05s ease;
+}
+
+/* 🟢 2. Após segurar por 300ms: Sinaliza VERDE (Pronto para soltar e iniciar) */
+.timer-big.ready-to-trigger {
+    color: #4cd964 !important; /* Verde oficial de campeonato */
+    transition: color 0.05s ease;
+}

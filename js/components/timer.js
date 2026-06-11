@@ -7,18 +7,19 @@ let isInspecting = false;
 let inspectionTime = 15;
 let inspectionInterval = null;
 
-// 📌 MODIFICAÇÃO 3: Inspeção vem DESATIVADA (false) por padrão agora
 let useInspection = false; 
-
 let lastSolveId = null; 
-let spacePressed = false; // Controle para evitar disparos contínuos no teclado
-let touchStartTimer = null; // Controle de tempo para o clique e segura no mobile
+let spacePressed = false; 
+let touchStartTimer = null; 
+let isReadyToStart = false; // Novo estado: monitora se o tempo de retenção foi atingido
+
+let justStopped = false;
 
 export async function initTimerScreen() {
     const container = document.getElementById('app-container');
     
     container.innerHTML = `
-        <div class="timer-wrapper">
+        <div class="timer-wrapper" id="timer-wrapper-zone">
             <div id="achievement-toast-container" class="toast-container"></div>
 
             <div class="timer-controls">
@@ -55,38 +56,55 @@ export async function initTimerScreen() {
 }
 
 function setupTimerEvents() {
-    // Remove listeners antigos para evitar duplicações de memória
     window.removeEventListener('keydown', handleKeyDown);
     window.removeEventListener('keyup', handleKeyUp);
     
-    // 💻 Listeners para Computador (Teclado)
+    // 💻 Computador (Teclado)
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
 
-    // 📱 Listeners para Celular (Touch)
-    const display = document.getElementById('timer-display');
-    if (display) {
-        display.removeEventListener('touchstart', handleTouchStart);
-        display.removeEventListener('touchend', handleTouchEnd);
+    // 📱 Celular (Toque em QUALQUER lugar do timer-wrapper)
+    const wrapper = document.getElementById('timer-wrapper-zone');
+    if (wrapper) {
+        wrapper.removeEventListener('touchstart', handleTouchStart);
+        wrapper.removeEventListener('touchend', handleTouchEnd);
         
-        display.addEventListener('touchstart', handleTouchStart, { passive: false });
-        display.addEventListener('touchend', handleTouchEnd);
+        wrapper.addEventListener('touchstart', handleTouchStart, { passive: false });
+        wrapper.addEventListener('touchend', handleTouchEnd);
     }
 }
 
-// 💻 LOGICA DE TECLADO (PC)
+// 💻 LÓGICA DE TECLADO (PC)
 function handleKeyDown(e) {
     if (e.code !== 'Space' || document.activeElement.tagName === 'BUTTON') return;
     e.preventDefault();
 
+    // 1. Se estiver rodando, apenas para o tempo na hora e ignora o resto
     if (running) {
-        // Se já está rodando, qualquer toque para o cronômetro imediatamente
         stopTimerLogic();
-    } else if (!spacePressed && !isInspecting) {
-        // Se está parado, muda de cor indicando que está pronto para soltar
+        return;
+    }
+
+    // 2. Se já estiver parado e a barra de espaço não estiver travada/pressionada
+    if (!spacePressed && !isInspecting) {
         spacePressed = true;
+        isReadyToStart = false;
+
         const display = document.getElementById('timer-display');
-        if (display) display.classList.add('ready-to-trigger'); 
+        if (display) {
+            display.textContent = "0.00"; // Zera o cronômetro
+            display.classList.remove('ready-to-trigger');
+            display.classList.add('holding-down'); // Fica Vermelho
+        }
+
+        // Se continuar segurando por 300ms, valida para iniciar
+        touchStartTimer = setTimeout(() => {
+            isReadyToStart = true;
+            if (display && spacePressed) {
+                display.classList.remove('holding-down');
+                display.classList.add('ready-to-trigger'); // Fica Verde
+            }
+        }, 300);
     }
 }
 
@@ -94,51 +112,80 @@ function handleKeyUp(e) {
     if (e.code !== 'Space' || document.activeElement.tagName === 'BUTTON') return;
     e.preventDefault();
 
+    // Só processa o levantamento da tecla se ela foi usada para tentar iniciar
     if (spacePressed) {
         spacePressed = false;
+        clearTimeout(touchStartTimer);
+
         const display = document.getElementById('timer-display');
-        if (display) display.classList.remove('ready-to-trigger');
-        
-        // Só inicia o tempo quando SOLTAR a barra de espaço (Padrão de campeonatos)
-        startTimerLogic();
+        if (display) {
+            display.classList.remove('holding-down', 'ready-to-trigger');
+        }
+
+        // Só inicia se segurou o suficiente para ficar verde
+        if (isReadyToStart) {
+            startTimerLogic();
+        }
     }
 }
 
-// 📱 LÓGICA DE TOQUE (CELULAR - SEGURAR E SOLTAR)
+// 📱 LÓGICA DE TOQUE (CELULAR - EM QUALQUER PARTE DO WRAPPER)
 function handleTouchStart(e) {
-    if (document.activeElement.tagName === 'BUTTON') return;
+    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.closest('.timer-controls')) return;
     e.preventDefault();
+    e.stopPropagation();
 
+    // 1. Se estiver rodando, apenas para o tempo na hora e ignora o resto
     if (running) {
         stopTimerLogic();
-    } else if (!isInspecting) {
+        return;
+    }
+
+    // 2. Se estiver parado, inicia o processo de preparação
+    if (!isInspecting) {
+        isReadyToStart = false;
         const display = document.getElementById('timer-display');
-        if (display) display.classList.add('ready-to-trigger');
-        
-        // Exige segurar por pelo menos 150ms para simular o Stackmat real
+
+        if (display) {
+            display.textContent = "0.00"; // Zera o cronômetro
+            display.classList.remove('ready-to-trigger');
+            display.classList.add('holding-down'); // Fica Vermelho
+        }
+
+        // Se continuar segurando por 300ms, valida para iniciar
         touchStartTimer = setTimeout(() => {
-            touchStartTimer = true; 
-        }, 150);
+            isReadyToStart = true;
+            if (display) {
+                display.classList.remove('holding-down');
+                display.classList.add('ready-to-trigger'); // Fica Verde
+            }
+        }, 300);
     }
 }
 
 function handleTouchEnd(e) {
-    if (running || isInspecting) return;
-    
-    const display = document.getElementById('timer-display');
-    if (display) display.classList.remove('ready-to-trigger');
+    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.closest('.timer-controls')) return;
+    e.preventDefault();
+    e.stopPropagation();
 
-    if (touchStartTimer === true) {
-        // Soltou após o tempo mínimo de retenção
-        startTimerLogic();
-    } else if (touchStartTimer) {
-        // Soltou rápido demais antes dos 150ms
-        clearTimeout(touchStartTimer);
+    // Se o cronômetro acabou de ser ativado ou está em inspeção, não inicia nada no levantamento do dedo
+    if (running || isInspecting) return;
+
+    // Se o usuário tirou o dedo antes dos 300ms (desistiu ou não deu o tempo), cancela
+    clearTimeout(touchStartTimer);
+
+    const display = document.getElementById('timer-display');
+    if (display) {
+        display.classList.remove('holding-down', 'ready-to-trigger');
     }
-    touchStartTimer = null;
+
+    // Só dispara se chegou a ficar verde
+    if (isReadyToStart) {
+        isReadyToStart = false; // Reseta para a próxima rodada
+        startTimerLogic();
+    }
 }
 
-// Inicializa a contagem ou inspeção
 function startTimerLogic() {
     const display = document.getElementById('timer-display');
     const wrapper = document.querySelector('.timer-wrapper');
@@ -160,7 +207,7 @@ function startTimerLogic() {
                 clearInterval(inspectionInterval);
                 display.textContent = "DNF";
                 isInspecting = false;
-                saveTime(0, true); // Salva como DNF automaticamente
+                saveTime(0, true);
             }
         }, 1000);
     } else {
@@ -184,7 +231,6 @@ function startTimerLogic() {
     }
 }
 
-// Interrompe o cronômetro e salva o resultado
 function stopTimerLogic() {
     clearInterval(timerInterval);
     running = false;
