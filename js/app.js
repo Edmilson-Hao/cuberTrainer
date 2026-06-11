@@ -41,8 +41,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         initTimerScreen();
 
         // Inicializa o Service Worker para suporte PWA offline
+        // Antes: navigator.serviceWorker.register('/sw.js')
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW Error:', err));
+            navigator.serviceWorker.register('./sw.js')
+                .then(reg => console.log('SW registrado com sucesso!', reg))
+                .catch(err => console.error('Erro ao registrar o SW:', err));
         }
 
     } catch (error) {

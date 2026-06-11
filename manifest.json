@@ -1,15 +1,23 @@
 {
-  "name": "Cuber Trainer CFOP",
   "short_name": "CuberTrainer",
-  "start_url": "/index.html",
-  "display": "standalone",
-  "background_color": "#121212",
-  "theme-color": "#121212",
+  "name": "Cuber Trainer CFOP",
   "icons": [
     {
-      "src": "imagens/f2l/f2l-caso-01.png",
+      "src": "./imagens/icon.png",
       "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./imagens/icon.png",
+      "sizes": "512x512",
       "type": "image/png"
     }
-  ]
+  ],
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0b0b0c",
+  "theme_color": "#00e5ff"
 }
