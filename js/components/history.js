@@ -1,170 +1,269 @@
 import { getAllFromStore, saveToStore, deleteFromStore, clearAllDatabase } from '../db.js';
 
 let REAL_SOLVES_STORE = 'times';
+let currentFilter = 'all'; 
 
+// Simplificado para mirar diretamente a store padrão unificada do seu sistema
 async function discoverAndFetchSolves() {
-    return new Promise((resolve) => {
-        const request = indexedDB.open('CuberTrainerDB');
-        request.onsuccess = async (event) => {
-            const db = event.target.result;
-            const storeNames = Array.from(db.objectStoreNames);
-            db.close(); 
-
-            if (storeNames.includes('times')) REAL_SOLVES_STORE = 'times';
-            else if (storeNames.includes('solves')) REAL_SOLVES_STORE = 'solves';
-
-            try {
-                const data = await getAllFromStore(REAL_SOLVES_STORE);
-                resolve(data || []);
-            } catch (err) {
-                resolve([]);
-            }
-        };
-        request.onerror = () => resolve([]);
-    });
+    try {
+        const data = await getAllFromStore(REAL_SOLVES_STORE);
+        return data || [];
+    } catch (err) {
+        return [];
+    }
 }
 
-// Funções utilitárias para calcular Médias Móveis (Ao5 e Ao12)
 function calcularAoN(solves, n) {
     if (solves.length < n) return '-';
-    const recentes = solves.slice(0, n);
+    const recentes = solves.slice(-n);
     if (recentes.some(s => s.isDNF)) return 'DNF';
     
     const tempos = recentes.map(s => s.time).sort((a, b) => a - b);
-    // Remove o melhor e o pior tempo (Regra oficial da WCA)
-    const temposFiltrados = tempos.slice(1, -1);
+    const temposFiltrados = tempos.slice(1, -1); 
     const soma = temposFiltrados.reduce((acc, t) => acc + t, 0);
     return (soma / temposFiltrados.length).toFixed(2) + 's';
 }
 
+function encontrarMelhorAoN(solves, n) {
+    if (solves.length < n) return '-';
+    let melhorMeda = Infinity;
+
+    for (let i = 0; i <= solves.length - n; i++) {
+        const subGrupo = solves.slice(i, i + n);
+        if (subGrupo.some(s => s.isDNF)) continue;
+        
+        const tempos = subGrupo.map(s => s.time).sort((a, b) => a - b);
+        const filtrados = tempos.slice(1, -1);
+        const media = filtrados.reduce((acc, t) => acc + t, 0) / filtrados.length;
+        
+        if (media < melhorMeda) {
+            melhorMeda = media;
+        }
+    }
+    return melhorMeda === Infinity ? '-' : melhorMeda.toFixed(2) + 's';
+}
+
 export async function initHistoryScreen() {
     const container = document.getElementById('app-container');
+    if (!container) return;
+    
     const allSolves = await discoverAndFetchSolves();
     
-    // Filtra e ordena para estatísticas
-    const validSolves = allSolves.filter(s => s && !s.isDNF);
-    const records = [...validSolves].sort((a, b) => a.time - b.time).slice(0, 12);
-    const chronological = [...allSolves].reverse(); // Mais recentes primeiro
+    // Filtro inteligente baseado na tag inserida na resolução
+    const filteredSolves = allSolves.filter(s => {
+        if (currentFilter === 'all') return true;
+        return s.step === currentFilter;
+    });
 
-    // Cálculos de Médias Atuais (baseado nas últimas resoluções cronológicas)
-    const currentAo5 = calcularAoN(allSolves.slice(-5).reverse(), 5);
-    const currentAo12 = calcularAoN(allSolves.slice(-12).reverse(), 12);
-    const melhorTempo = records[0] ? records[0].time + 's' : '-';
+    const validSolves = filteredSolves.filter(s => s && !s.isDNF);
+    const records = [...validSolves].sort((a, b) => a.time - b.time).slice(0, 12);
+    const chronological = [...filteredSolves].reverse();
+
+    const currentAo5 = calcularAoN(filteredSolves, 5);
+    const currentAo12 = calcularAoN(filteredSolves, 12);
+    const bestSingle = records[0] ? records[0].time.toFixed(2) + 's' : '-';
+    const bestAo5 = encontrarMelhorAoN(filteredSolves, 5);
+    const bestAo12 = encontrarMelhorAoN(filteredSolves, 12);
+
+    const totalSolvesCount = filteredSolves.length;
+    const dnfCount = filteredSolves.filter(s => s.isDNF).length;
+    const taxaSucesso = totalSolvesCount > 0 ? Math.round(((totalSolvesCount - dnfCount) / totalSolvesCount) * 100) : 100;
+
+    // --- GERAÇÃO DO HISTOGRAMA ---
+    const faixas = { 'Sub-25s': 0, '25s-30s': 0, '30s-35s': 0, '35s-40s': 0, '40s+': 0 };
+    validSolves.forEach(s => {
+        if (s.time < 25) faixas['Sub-25s']++;
+        else if (s.time < 30) faixas['25s-30s']++;
+        else if (s.time < 35) faixas['30s-35s']++;
+        else if (s.time < 40) faixas['35s-40s']++;
+        else faixas['40s+']++;
+    });
+    const maxFrequencia = Math.max(...Object.values(faixas)) || 1;
 
     container.innerHTML = `
-        <div class="history-container">
-            <div class="stats-overview-card" style="background: var(--bg-card, #1e1e2e); padding: 15px; border-radius: 12px; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.05);">
-                <h3 style="margin-top:0; font-size:15px; color:var(--text-muted);">📊 Resumo de Performance</h3>
+        <div class="history-container" style="max-width: 600px; margin: 0 auto; padding: 10px;">
+            
+            <!-- 📊 PAINEL DE PERFORMANCE -->
+            <div class="stats-overview-card" style="background: #1e1e2e; padding: 15px; border-radius: 12px; margin-bottom: 20px; border: 1px solid #313244;">
+                <h3 style="margin-top:0; font-size:14px; color:var(--text-muted); display:flex; justify-content:space-between;">
+                    <span>📊 Estatísticas Globais (${currentFilter.toUpperCase()})</span>
+                    <span style="color:#a6e3a1;">Sucesso: ${taxaSucesso}% (${dnfCount} DNF)</span>
+                </h3>
                 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; text-align: center;">
-                    <div style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 8px;">
-                        <span style="font-size:11px; color: var(--text-muted); display:block;">Melhor Single</span>
-                        <strong style="font-size:18px; color: #a6e3a1;">${melhorTempo}</strong>
+                    <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
+                        <span style="font-size:10px; color: var(--text-muted); display:block;">Histórico (Best)</span>
+                        <strong style="font-size:16px; color: #a6e3a1;">${bestSingle}</strong>
                     </div>
-                    <div style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 8px;">
-                        <span style="font-size:11px; color: var(--text-muted); display:block;">Média Móvel (Ao5)</span>
-                        <strong style="font-size:18px; color: #f9e2af;">${currentAo5}</strong>
+                    <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
+                        <span style="font-size:10px; color: var(--text-muted); display:block;">Histórico (Best)</span>
+                        <strong style="font-size:16px; color: #f9e2af;">${bestAo5}</strong>
                     </div>
-                    <div style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 8px;">
-                        <span style="font-size:11px; color: var(--text-muted); display:block;">Média Móvel (Ao12)</span>
-                        <strong style="font-size:18px; color: #89b4fa;">${currentAo12}</strong>
+                    <div style="background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px;">
+                        <span style="font-size:10px; color: var(--text-muted); display:block;">Histórico (Best)</span>
+                        <strong style="font-size:16px; color: #89b4fa;">${bestAo12}</strong>
                     </div>
                 </div>
-
-                <div class="mini-chart-container" style="margin-top:15px; height: 60px; display:flex; align-items:flex-end; gap:3px; background:rgba(0,0,0,0.15); padding: 5px; border-radius:6px;">
-                    ${validSolves.slice(-20).map(s => {
-                        const maxTime = Math.max(...validSolves.slice(-20).map(x => x.time)) || 1;
-                        const heightPct = (s.time / maxTime) * 100;
-                        return `<div style="flex:1; background:#89b4fa; height:${heightPct}%; border-radius:2px; min-height:10%;" title="${s.time}s em ${new Date(s.date).toLocaleDateString()}"></div>`;
-                    }).join('') || '<p style="font-size:12px; color:var(--text-muted); width:100%; text-align:center;">Evolução gráfica visível após os primeiros treinos.</p>'}
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; text-align: center; margin-top:8px;">
+                    <div style="background: rgba(255,255,255,0.04); padding: 10px; border-radius: 8px;">
+                        <span style="font-size:10px; color: var(--text-muted); display:block;">Atual</span>
+                        <strong style="font-size:16px; color: #fff;">${filteredSolves.length > 0 && !filteredSolves[filteredSolves.length-1].isDNF ? filteredSolves[filteredSolves.length-1].time.toFixed(2) + 's' : '-'}</strong>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.04); padding: 10px; border-radius: 8px;">
+                        <span style="font-size:10px; color: var(--text-muted); display:block;">Atual</span>
+                        <strong style="font-size:16px; color: #fff;">${currentAo5}</strong>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.04); padding: 10px; border-radius: 8px;">
+                        <span style="font-size:10px; color: var(--text-muted); display:block;">Atual</span>
+                        <strong style="font-size:16px; color: #fff;">${currentAo12}</strong>
+                    </div>
                 </div>
             </div>
 
-            <h3>🏆 Recordes Pessoais (Top 12 Melhores Tempos)</h3>
-            <div class="records-grid">
+            <!-- 📈 HISTOGRAMA CONFORME EXIBIDO NA IMAGEM_70958A.PNG -->
+            <div class="histogram-card" style="background: #1e1e2e; padding: 15px; border-radius: 12px; margin-bottom: 20px; border: 1px solid #313244;">
+                <h3 style="margin-top:0; font-size:14px; color:var(--text-muted); margin-bottom:12px;">📈 Distribuição de Tempos (Consistência)</h3>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    ${Object.entries(faixas).map(([faixa, qtd]) => {
+                        const pct = (qtd / maxFrequencia) * 100;
+                        return `
+                            <div style="display: flex; align-items: center; font-size: 12px;">
+                                <span style="width: 65px; color: var(--text-muted); font-family:monospace;">${faixa}</span>
+                                <div style="flex: 1; background: rgba(255,255,255,0.05); height: 14px; border-radius: 4px; margin: 0 10px; overflow:hidden;">
+                                    <div style="background: #89b4fa; width: ${pct}%; height: 100%; border-radius: 4px; transition: width 0.4s ease;"></div>
+                                </div>
+                                <span style="width: 20px; text-align: right; font-weight: bold; color: #fff;">${qtd}</span>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+
+            <!-- ⏱️ CONTROLES DE FILTROS DA IMAGEM_70958A.PNG -->
+            <div class="filter-bar" style="display: flex; gap: 8px; margin-bottom: 20px;">
+                <button class="btn-filter" data-filter="all" style="flex:1; padding:10px; border-radius:8px; font-size:13px; font-weight:bold; cursor:pointer; background:${currentFilter === 'all' ? '#89b4fa' : '#313244'}; color:${currentFilter === 'all' ? '#11111b' : '#fff'}; border:none; transition: 0.2s;">Todas</button>
+                <button class="btn-filter" data-filter="f2l" style="flex:1; padding:10px; border-radius:8px; font-size:13px; font-weight:bold; cursor:pointer; background:${currentFilter === 'f2l' ? '#89b4fa' : '#313244'}; color:${currentFilter === 'f2l' ? '#11111b' : '#fff'}; border:none; transition: 0.2s;">F2L</button>
+                <button class="btn-filter" data-filter="oll" style="flex:1; padding:10px; border-radius:8px; font-size:13px; font-weight:bold; cursor:pointer; background:${currentFilter === 'oll' ? '#89b4fa' : '#313244'}; color:${currentFilter === 'oll' ? '#11111b' : '#fff'}; border:none; transition: 0.2s;">OLL</button>
+                <button class="btn-filter" data-filter="pll" style="flex:1; padding:10px; border-radius:8px; font-size:13px; font-weight:bold; cursor:pointer; background:${currentFilter === 'pll' ? '#89b4fa' : '#313244'}; color:${currentFilter === 'pll' ? '#11111b' : '#fff'}; border:none; transition: 0.2s;">PLL</button>
+            </div>
+
+            <h3>🏆 Melhores Registros (Top 12)</h3>
+            <div class="records-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 20px;">
                 ${records.map((r, i) => `
-                    <div class="record-badge">
-                        <span class="rank">#${i+1}</span>
-                        <span class="time">${r.time}s</span>
+                    <div class="record-badge" style="background: rgba(137,180,250,0.05); border: 1px solid rgba(137,180,250,0.1); padding: 6px; border-radius: 6px; text-align:center; font-size:12px;">
+                        <span style="color:var(--text-muted); font-size:10px; display:block;">#${i+1}</span>
+                        <strong style="color:#fff; font-family:monospace;">${r.time.toFixed(2)}s</strong>
                     </div>
-                `).join('') || '<p style="color: var(--text-muted); grid-column: span 4;">Nenhum tempo válido registrado.</p>'}
+                `).join('') || '<p style="color: var(--text-muted); grid-column: span 4; font-size:12px; text-align:center;">Sem registros.</p>'}
             </div>
             
-            <div class="backup-actions-wrapper">
-                <div class="backup-buttons">
-                    <button id="btn-export-json" class="btn-action-small">📤 Exportar JSON e Copiar</button>
-                    <button id="btn-import-json" class="btn-action-small">📥 Importar Dados</button>
+            <div class="backup-actions-wrapper" style="margin-bottom: 25px;">
+                <div class="backup-buttons" style="display:flex; gap:10px;">
+                    <button id="btn-export-json" style="flex:1; background:#313244; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:11px;">📤 Exportar Backup</button>
+                    <button id="btn-import-json" style="flex:1; background:#313244; color:#fff; border:none; padding:8px; border-radius:6px; cursor:pointer; font-size:11px;">📥 Importar Dados</button>
                 </div>
-                
-                <div id="import-zone" class="import-input-zone hidden">
-                    <div style="margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 12px;">
-                        <label style="display:block; font-size:12px; margin-bottom: 6px; color:var(--text-muted);">Opção 1: Selecionar arquivo de backup (.json)</label>
-                        <input type="file" id="file-import-picker" accept=".json" style="font-size:13px; color: #fff;">
-                    </div>
-                    <div>
-                        <label style="display:block; font-size:12px; margin-bottom: 6px; color:var(--text-muted);">Opção 2: Cole o código JSON copiado</label>
-                        <textarea id="txt-import-data" placeholder="Cole aqui o código JSON copiado..."></textarea>
-                    </div>
-                    <button id="btn-confirm-import" class="btn-primary" style="padding: 10px; font-size: 14px; margin-top: 10px; width: 100%;">Confirmar Importação</button>
+                <div id="import-zone" class="import-input-zone hidden" style="margin-top:10px; display:none; flex-direction:column; gap:8px;">
+                    <input type="file" id="file-import-picker" accept=".json">
+                    <textarea id="txt-import-data" placeholder="Cole o JSON de backup aqui..." style="height:60px; background:#11111b; color:#fff; border:1px solid #313244; border-radius:6px; padding:6px; font-family:monospace; font-size:11px;"></textarea>
+                    <button id="btn-confirm-import" style="background:#89b4fa; color:#11111b; border:none; padding:8px; border-radius:6px; font-weight:bold; cursor:pointer; font-size:12px;">Confirmar</button>
                 </div>
-                <div id="backup-status-msg" class="backup-status"></div>
+                <div id="backup-status-msg" style="color:#a6e3a1; font-size:12px; margin-top:5px; text-align:center;"></div>
             </div>
             
-            <h3>⏱️ Histórico Completo</h3>
-            <div class="table-scroll-wrapper">
-                <table class="history-table" style="width: 100%; border-collapse: collapse;">
+            <h3>⏱️ Linha do Tempo</h3>
+            <div class="table-scroll-wrapper" style="overflow-x:auto;">
+                <table class="history-table" style="width:100%; border-collapse:collapse;">
                     <thead>
-                        <tr>
-                            <th style="text-align: left; padding: 10px;">Informações da Solve</th>
-                            <th style="text-align: center; width: 60px;">Ações</th>
+                        <tr style="border-bottom:2px solid #313244; color:var(--text-muted); font-size:12px;">
+                            <th style="text-align:left; padding:8px;">Resolução</th>
+                            <th style="text-align:right; padding:8px;">Modificadores WCA</th>
                         </tr>
                     </thead>
                     <tbody id="history-table-body">
                         ${chronological.map(s => `
-                            <tr id="row-${s.id}" style="border-top: 1px solid rgba(255,255,255,0.05);">
-                                <td style="padding: 10px 10px 2px 10px;">
-                                    <span style="color: var(--text-muted); font-size: 12px; margin-right: 15px;">📅 ${new Date(s.date).toLocaleDateString()}</span>
-                                    <strong class="${s.isDNF ? 'dnf-text' : ''}" style="font-size: 15px;">⏱️ ${s.isDNF ? 'DNF' : s.time + 's'}</strong>
+                            <tr id="row-${s.id}" style="border-bottom:1px solid rgba(255,255,255,0.03);">
+                                <td style="padding:10px 8px 4px 8px;">
+                                    <div style="font-size:11px; color:var(--text-muted); margin-bottom:3px;">
+                                        📅 ${new Date(s.date).toLocaleDateString()} 
+                                        <span style="color:#f5c2e7; font-weight:bold; margin-left:8px;">[${(s.step || 'GLOBAL').toUpperCase()}]</span>
+                                    </div>
+                                    <strong style="font-size:15px; font-family:monospace; color:${s.isDNF ? '#f38ba8' : '#fff'};">
+                                        ${s.isDNF ? 'DNF' : s.time.toFixed(2) + 's'}${s.hasPlusTwo ? ' (+2)' : ''}
+                                    </strong>
                                 </td>
-                                <td rowspan="2" style="text-align: center; vertical-align: middle;">
-                                    <button class="btn-delete-history" data-id="${s.id}" title="Excluir tempo" style="background:transparent; border:none; cursor:pointer; font-size:16px;">🗑️</button>
+                                <td style="text-align:right; padding:10px 8px 4px 8px; vertical-align:middle;">
+                                    <button class="btn-penalty-wca" data-id="${s.id}" data-type="plus2" style="padding:3px 6px; font-size:11px; border-radius:4px; cursor:pointer; margin-right:4px; border:none; background:${s.hasPlusTwo ? '#f9e2af' : '#313244'}; color:${s.hasPlusTwo ? '#11111b' : '#fff'}; font-weight:bold;">+2s</button>
+                                    <button class="btn-penalty-wca" data-id="${s.id}" data-type="dnf" style="padding:3px 6px; font-size:11px; border-radius:4px; cursor:pointer; margin-right:8px; border:none; background:${s.isDNF ? '#f38ba8' : '#313244'}; color:${s.isDNF ? '#11111b' : '#fff'}; font-weight:bold;">DNF</button>
+                                    <button class="btn-delete-history" data-id="${s.id}" style="background:transparent; border:none; cursor:pointer; font-size:13px; color:#f38ba8; padding:0 4px;">🗑️</button>
                                 </td>
                             </tr>
-                            <tr id="row-scramble-${s.id}">
-                                <td colspan="1" style="padding: 0px 10px 10px 10px; color: var(--text-muted); font-size: 12px; font-family: monospace; line-height: 1.4; word-break: break-word;">
-                                    <div style="background: rgba(0,0,0,0.15); padding: 6px; border-radius: 4px; color: #cdd6f4;">${s.scramble}</div>
+                            <tr id="row-scramble-${s.id}" style="border-bottom:1px solid #313244;">
+                                <td colspan="2" style="padding:0px 8px 10px 8px;">
+                                    <div style="background:rgba(0,0,0,0.2); padding:6px 10px; border-radius:6px; font-family:monospace; font-size:11px; color:#cdd6f4; word-break:break-word; line-height:1.3;">
+                                        ${s.scramble || 'Sem scramble registrado'}
+                                    </div>
                                 </td>
                             </tr>
-                        `).join('') || '<tr><td colspan="2" style="text-align:center; color:var(--text-muted); padding: 20px;">Nenhum treino salvo.</td></tr>'}
+                        `).join('') || '<tr><td colspan="2" style="text-align:center; color:var(--text-muted); padding:30px; font-size:13px;">Nenhuma resolução nesta categoria.</td></tr>'}
                     </tbody>
                 </table>
             </div>
 
-            <div class="danger-zone-container">
-                <button id="btn-reset-system" class="btn-reset-danger">
-                    <span class="icon">⚠️</span> Resetar Todos os Dados
-                </button>
+            <div style="margin-top:30px; border-top:1px dashed #f38ba8; padding-top:15px; text-align:center;">
+                <button id="btn-reset-system" style="background:transparent; border:1px solid #f38ba8; color:#f38ba8; padding:6px 12px; border-radius:6px; cursor:pointer; font-size:11px; font-weight:bold;">⚠️ Limpar Toda a Base de Dados</button>
             </div>
         </div>
     `;
+
+    // Listeners dos filtros
+    document.querySelectorAll('.btn-filter').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            currentFilter = e.target.getAttribute('data-filter');
+            initHistoryScreen();
+        });
+    });
 
     document.getElementById('btn-export-json').addEventListener('click', () => exportData(allSolves));
     document.getElementById('btn-import-json').addEventListener('click', toggleImportZone);
     document.getElementById('btn-confirm-import').addEventListener('click', importData);
     document.getElementById('file-import-picker').addEventListener('change', handleFileSelect);
 
+    // Gerenciador central de cliques para Modificadores e Exclusão
     const tableBody = document.getElementById('history-table-body');
     if (tableBody) {
         tableBody.addEventListener('click', async (e) => {
-            if (e.target.classList.contains('btn-delete-history')) {
-                const solveId = e.target.getAttribute('data-id');
-                if (confirm('Deseja realmente apagar este tempo do seu histórico?')) {
-                    try {
-                        await deleteFromStore(REAL_SOLVES_STORE, parseInt(solveId) || solveId);
-                        initHistoryScreen(); 
-                    } catch (err) {
-                        console.error(err);
-                    }
+            const target = e.target;
+            const solveId = target.getAttribute('data-id');
+            if (!solveId) return;
+
+            const dbId = parseInt(solveId) || solveId;
+
+            if (target.classList.contains('btn-delete-history') || target.textContent === '🗑️') {
+                if (confirm('Deseja deletar essa resolução do histórico?')) {
+                    await deleteFromStore(REAL_SOLVES_STORE, dbId);
+                    initHistoryScreen();
                 }
+                return;
+            }
+
+            if (target.classList.contains('btn-penalty-wca')) {
+                const type = target.getAttribute('data-type');
+                const solve = allSolves.find(x => x.id === dbId);
+                if (!solve) return;
+
+                if (type === 'plus2') {
+                    if (!solve.hasPlusTwo) {
+                        solve.hasPlusTwo = true;
+                        solve.time = parseFloat((solve.time + 2.0).toFixed(2));
+                    } else {
+                        solve.hasPlusTwo = false;
+                        solve.time = parseFloat((solve.time - 2.0).toFixed(2));
+                    }
+                } else if (type === 'dnf') {
+                    solve.isDNF = !solve.isDNF;
+                }
+
+                await saveToStore(REAL_SOLVES_STORE, solve);
+                initHistoryScreen();
             }
         });
     }
@@ -172,110 +271,56 @@ export async function initHistoryScreen() {
     const btnReset = document.getElementById('btn-reset-system');
     if (btnReset) {
         btnReset.addEventListener('click', async () => {
-            if (confirm("Você perderá todos os seus tempos e recordes permanentemente. Continuar?") && confirm("Tem certeza absoluta?")) {
-                try {
-                    await clearAllDatabase();
-                    localStorage.clear();
-                    sessionStorage.clear();
-                    window.location.reload();
-                } catch (error) {
-                    alert("Erro ao limpar dados.");
-                }
+            if (confirm("ATENÇÃO: Isso apagará permanentemente todos os seus treinos e tempos. Deseja continuar?")) {
+                await clearAllDatabase();
+                localStorage.clear();
+                window.location.reload();
             }
         });
     }
 }
 
+// Funções de Gerenciamento do Sistema de Backup
 async function exportData(allSolves) {
     const statusMsg = document.getElementById('backup-status-msg');
     try {
-        let allCasesProgress = [];
-        try { allCasesProgress = await getAllFromStore('casesState') || []; } catch (e) { allCasesProgress = []; }
+        let allCasesProgress = await getAllFromStore('casesState') || [];
+        const jsonString = JSON.stringify({ times: allSolves, casesProgress: allCasesProgress }, null, 2);
+        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(jsonString);
         
-        const backupPayload = { times: allSolves, casesProgress: allCasesProgress, exportedAt: new Date().toISOString() };
-        const jsonString = JSON.stringify(backupPayload, null, 2);
-
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            await navigator.clipboard.writeText(jsonString);
-            if (statusMsg) {
-                statusMsg.textContent = "📋 Código copiado e arquivo JSON baixado!";
-                statusMsg.style.color = "#00ff66";
-            }
-        }
-
         const blob = new Blob([jsonString], { type: "application/json" });
-        const blobUrl = URL.createObjectURL(blob);
-        const downloadAnchor = document.createElement('a');
-        downloadAnchor.href = blobUrl;
-        downloadAnchor.download = `cuber_trainer_backup_${Date.now()}.json`;
-        document.body.appendChild(downloadAnchor);
-        downloadAnchor.click();
-        document.body.removeChild(downloadAnchor);
-        URL.revokeObjectURL(blobUrl);
-    } catch (error) {
-        alert("Erro ao exportar.");
-    }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `backup_cubertrainer_${Date.now()}.json`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        if (statusMsg) statusMsg.textContent = "📋 Backup salvo e copiado!";
+    } catch (e) { alert("Falha ao exportar."); }
 }
 
 function handleFileSelect(e) {
-    const file = e.target.files[0];
-    if (!file) return;
+    const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
-    reader.onload = function(evt) {
-        document.getElementById('txt-import-data').value = evt.target.result;
-        document.getElementById('backup-status-msg').textContent = "📂 Arquivo carregado! Clique em 'Confirmar Importação'.";
-    };
+    reader.onload = (evt) => { document.getElementById('txt-import-data').value = evt.target.result; };
     reader.readAsText(file);
 }
 
 async function importData() {
-    const rawData = document.getElementById('txt-import-data').value;
-    const statusMsg = document.getElementById('backup-status-msg');
-    
     try {
-        const parsed = JSON.parse(rawData);
-        if (parsed.times && Array.isArray(parsed.times)) {
-            const currentSolves = await getAllFromStore(REAL_SOLVES_STORE) || [];
-            
-            // 🛡️ MODIFICAÇÃO 1: Evita duplicados comparando propriedades estruturais chaves
-            let novosTemposAdicionados = 0;
-            for (let solve of parsed.times) {
-                const jaExiste = currentSolves.some(existente => 
-                    existente.time === solve.time && 
-                    existente.scramble === solve.scramble &&
-                    new Date(existente.date).getTime() === new Date(solve.date).getTime()
-                );
-
-                if (!jaExiste) {
-                    const solveClean = { ...solve };
-                    delete solveClean.id; // Garante auto-incremento sem colisões
-                    await saveToStore(REAL_SOLVES_STORE, solveClean);
-                    novosTemposAdicionados++;
+        const parsed = JSON.parse(document.getElementById('txt-import-data').value);
+        if (parsed.times) {
+            const current = await getAllFromStore(REAL_SOLVES_STORE) || [];
+            for (let s of parsed.times) {
+                if (!current.some(x => x.time === s.time && x.scramble === s.scramble)) {
+                    delete s.id; await saveToStore(REAL_SOLVES_STORE, s);
                 }
             }
-            
-            if (parsed.casesProgress && Array.isArray(parsed.casesProgress)) {
-                const currentCases = await getAllFromStore('casesState') || [];
-                for (let caseData of parsed.casesProgress) {
-                    const casoExistente = currentCases.find(c => c.uid === caseData.uid);
-                    // Mescla apenas se trouxer contagens mais avançadas ou dados novos
-                    if (!casoExistente || (caseData.successCount + caseData.failCount > casoExistente.successCount + casoExistente.failCount)) {
-                        const caseClean = { ...caseData };
-                        if (casoExistente) caseClean.id = casoExistente.id;
-                        await saveToStore('casesState', caseClean).catch(() => {});
-                    }
-                }
-            }
-            
-            statusMsg.textContent = `✅ Importação concluída! ${novosTemposAdicionados} novas solves adicionadas.`;
-            statusMsg.style.color = "#00ff66";
-            setTimeout(() => window.location.reload(), 1200);
+            window.location.reload();
         }
-    } catch (err) {
-        statusMsg.textContent = "❌ JSON inválido ou corrompido.";
-    }
+    } catch (e) { alert("Erro ao processar arquivo."); }
 }
 
 function toggleImportZone() {
-    document.getElementById('import-zone').classList.toggle('hidden');
+    const zone = document.getElementById('import-zone');
+    if (zone) zone.style.display = zone.style.display === 'none' || zone.style.display === '' ? 'flex' : 'none';
 }

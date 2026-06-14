@@ -59,50 +59,43 @@ function setupTimerEvents() {
     window.removeEventListener('keydown', handleKeyDown);
     window.removeEventListener('keyup', handleKeyUp);
     
-    // 💻 Computador (Teclado)
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
 
-    // 📱 Celular (Toque em QUALQUER lugar do timer-wrapper)
     const wrapper = document.getElementById('timer-wrapper-zone');
     if (wrapper) {
         wrapper.removeEventListener('touchstart', handleTouchStart);
         wrapper.removeEventListener('touchend', handleTouchEnd);
-        
         wrapper.addEventListener('touchstart', handleTouchStart, { passive: false });
         wrapper.addEventListener('touchend', handleTouchEnd);
     }
 }
 
-// 💻 LÓGICA DE TECLADO (PC)
 function handleKeyDown(e) {
     if (e.code !== 'Space' || document.activeElement.tagName === 'BUTTON') return;
     e.preventDefault();
 
-    // 1. Se estiver rodando, apenas para o tempo na hora e ignora o resto
     if (running) {
         stopTimerLogic();
         return;
     }
 
-    // 2. Se já estiver parado e a barra de espaço não estiver travada/pressionada
     if (!spacePressed && !isInspecting) {
         spacePressed = true;
         isReadyToStart = false;
 
         const display = document.getElementById('timer-display');
         if (display) {
-            display.textContent = "0.00"; // Zera o cronômetro
+            display.textContent = "0.00";
             display.classList.remove('ready-to-trigger');
-            display.classList.add('holding-down'); // Fica Vermelho
+            display.classList.add('holding-down');
         }
 
-        // Se continuar segurando por 300ms, valida para iniciar
         touchStartTimer = setTimeout(() => {
             isReadyToStart = true;
             if (display && spacePressed) {
                 display.classList.remove('holding-down');
-                display.classList.add('ready-to-trigger'); // Fica Verde
+                display.classList.add('ready-to-trigger');
             }
         }, 300);
     }
@@ -112,52 +105,40 @@ function handleKeyUp(e) {
     if (e.code !== 'Space' || document.activeElement.tagName === 'BUTTON') return;
     e.preventDefault();
 
-    // Só processa o levantamento da tecla se ela foi usada para tentar iniciar
     if (spacePressed) {
         spacePressed = false;
         clearTimeout(touchStartTimer);
 
         const display = document.getElementById('timer-display');
-        if (display) {
-            display.classList.remove('holding-down', 'ready-to-trigger');
-        }
+        if (display) display.classList.remove('holding-down', 'ready-to-trigger');
 
-        // Só inicia se segurou o suficiente para ficar verde
-        if (isReadyToStart) {
-            startTimerLogic();
-        }
+        if (isReadyToStart) startTimerLogic();
     }
 }
 
-// 📱 LÓGICA DE TOQUE (CELULAR - EM QUALQUER PARTE DO WRAPPER)
 function handleTouchStart(e) {
     if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.closest('.timer-controls')) return;
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
 
-    // 1. Se estiver rodando, apenas para o tempo na hora e ignora o resto
     if (running) {
         stopTimerLogic();
         return;
     }
 
-    // 2. Se estiver parado, inicia o processo de preparação
     if (!isInspecting) {
         isReadyToStart = false;
         const display = document.getElementById('timer-display');
-
         if (display) {
-            display.textContent = "0.00"; // Zera o cronômetro
+            display.textContent = "0.00";
             display.classList.remove('ready-to-trigger');
-            display.classList.add('holding-down'); // Fica Vermelho
+            display.classList.add('holding-down');
         }
 
-        // Se continuar segurando por 300ms, valida para iniciar
         touchStartTimer = setTimeout(() => {
             isReadyToStart = true;
             if (display) {
                 display.classList.remove('holding-down');
-                display.classList.add('ready-to-trigger'); // Fica Verde
+                display.classList.add('ready-to-trigger');
             }
         }, 300);
     }
@@ -165,23 +146,16 @@ function handleTouchStart(e) {
 
 function handleTouchEnd(e) {
     if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' || e.target.closest('.timer-controls')) return;
-    e.preventDefault();
-    e.stopPropagation();
+    e.preventDefault(); e.stopPropagation();
 
-    // Se o cronômetro acabou de ser ativado ou está em inspeção, não inicia nada no levantamento do dedo
     if (running || isInspecting) return;
-
-    // Se o usuário tirou o dedo antes dos 300ms (desistiu ou não deu o tempo), cancela
     clearTimeout(touchStartTimer);
 
     const display = document.getElementById('timer-display');
-    if (display) {
-        display.classList.remove('holding-down', 'ready-to-trigger');
-    }
+    if (display) display.classList.remove('holding-down', 'ready-to-trigger');
 
-    // Só dispara se chegou a ficar verde
     if (isReadyToStart) {
-        isReadyToStart = false; // Reseta para a próxima rodada
+        isReadyToStart = false;
         startTimerLogic();
     }
 }
@@ -197,15 +171,17 @@ function startTimerLogic() {
     if (useInspection && !isInspecting) {
         isInspecting = true;
         inspectionTime = 15;
-        display.classList.add('inspecting');
-        display.textContent = inspectionTime;
+        if (display) {
+            display.classList.add('inspecting');
+            display.textContent = inspectionTime;
+        }
         
         inspectionInterval = setInterval(() => {
             inspectionTime--;
-            display.textContent = inspectionTime;
+            if (display) display.textContent = inspectionTime;
             if (inspectionTime <= 0) {
                 clearInterval(inspectionInterval);
-                display.textContent = "DNF";
+                if (display) display.textContent = "DNF";
                 isInspecting = false;
                 saveTime(0, true);
             }
@@ -218,15 +194,14 @@ function startTimerLogic() {
         
         running = true;
         if (wrapper) wrapper.classList.add('running-mode');
-        if (header) {
-            header.style.opacity = '0';
-            header.style.pointerEvents = 'none';
+        if (header) { header.style.opacity = '0'; header.style.pointerEvents = 'none'; }
+        if (display) {
+            display.classList.remove('inspecting');
+            display.classList.add('running');
         }
-        display.classList.remove('inspecting');
-        display.classList.add('running');
         startTime = Date.now();
         timerInterval = setInterval(() => {
-            display.textContent = ((Date.now() - startTime) / 1000).toFixed(2);
+            if (display) display.textContent = ((Date.now() - startTime) / 1000).toFixed(2);
         }, 10);
     }
 }
@@ -240,31 +215,12 @@ function stopTimerLogic() {
     const header = document.querySelector('header');
     
     if (wrapper) wrapper.classList.remove('running-mode');
-    if (header) {
-        header.style.opacity = '1';
-        header.style.pointerEvents = 'auto';
-    }
-    
+    if (header) { header.style.opacity = '1'; header.style.pointerEvents = 'auto'; }
     if (display) display.classList.remove('running');
+    
     const finalTime = parseFloat(((Date.now() - startTime) / 1000).toFixed(2));
     saveTime(finalTime);
     generateScramble();
-}
-
-// ... O resto das suas funções (saveTime, updateLiveAverages, etc.) continuam iguais abaixo ...
-export function clearTimerState() {
-    clearInterval(timerInterval);
-    clearInterval(inspectionInterval);
-    window.removeEventListener('keydown', handleTrigger);
-    running = false;
-    isInspecting = false;
-    lastSolveId = null;
-    
-    const header = document.querySelector('header');
-    if (header) {
-        header.style.opacity = '1';
-        header.style.pointerEvents = 'auto';
-    }
 }
 
 function generateScramble() {
@@ -277,12 +233,151 @@ function generateScramble() {
         do {
             move = moves[Math.floor(Math.random() * moves.length)];
         } while (move.charAt(0) === lastMove.charAt(0));
-        
         scramble.push(move);
         lastMove = move;
     }
     const elem = document.getElementById('scramble-generator');
     if (elem) elem.textContent = scramble.join(" ");
+}
+
+async function saveTime(timeValue, isDNF = false) {
+    const allSolves = await getAllFromStore('times');
+    const validSolves = allSolves.filter(s => !s.isDNF).sort((a, b) => a.time - b.time);
+
+    let achievementType = null;
+    if (!isDNF) {
+        if (validSolves.length === 0) {
+            achievementType = 'pb';
+        } else {
+            const currentPB = validSolves[0].time;
+            if (timeValue < currentPB) {
+                achievementType = 'pb';
+            } else if (validSolves.length < 12) {
+                achievementType = 'top12';
+            } else if (timeValue < validSolves[11].time) {
+                achievementType = 'top12';
+            }
+        }
+    }
+
+    const newSolve = {
+        time: timeValue,
+        isDNF: isDNF,
+        hasPlusTwo: false, // 🛡️ INTEGRAÇÃO: Propriedade necessária para o gerenciador do histórico
+        step: 'global',    // 🛡️ INTEGRAÇÃO: Identifica que veio de treinos livres do timer principal
+        date: new Date().toISOString(),
+        scramble: document.getElementById('scramble-generator')?.textContent || ""
+    };
+    
+    const id = await saveToStore('times', newSolve);
+    lastSolveId = id; 
+    
+    const actionsPanel = document.getElementById('quick-actions-panel');
+    if (actionsPanel) actionsPanel.classList.remove('hidden');
+
+    updateLiveAverages();
+
+    if (achievementType) {
+        triggerAchievementToast(achievementType, timeValue);
+    }
+}
+
+function triggerAchievementToast(type, time) {
+    const container = document.getElementById('achievement-toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `achievement-toast ${type}`;
+
+    if (type === 'pb') {
+        toast.innerHTML = `
+            <div class="toast-icon">👑</div>
+            <div class="toast-content">
+                <h4>NOVO RECORDE PESSOAL!</h4>
+                <p>Incrível! Você baixou seu melhor tempo para <strong>${time}s</strong></p>
+            </div>
+        `;
+    } else if (type === 'top12') {
+        toast.innerHTML = `
+            <div class="toast-icon">🏆</div>
+            <div class="toast-content">
+                <h4>ENTROU NO TOP 12!</h4>
+                <p>O tempo de <strong>${time}s</strong> entrou para os seus melhores tempos.</p>
+            </div>
+        `;
+    }
+
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.classList.add('fade-out');
+        setTimeout(() => toast.remove(), 500);
+    }, 3500);
+}
+
+async function markLastAsDNF() {
+    if (!lastSolveId) return;
+    const allSolves = await getAllFromStore('times');
+    const solve = allSolves.find(s => s.id === lastSolveId);
+    if (solve) {
+        solve.isDNF = true;
+        await saveToStore('times', solve);
+        const display = document.getElementById('timer-display');
+        if (display) display.textContent = "DNF";
+        document.getElementById('quick-actions-panel').classList.add('hidden');
+        updateLiveAverages();
+    }
+}
+
+async function deleteLastSolve() {
+    if (!lastSolveId) return;
+    await deleteFromStore('times', lastSolveId);
+    const display = document.getElementById('timer-display');
+    if (display) display.textContent = "0.00";
+    document.getElementById('quick-actions-panel').classList.add('hidden');
+    lastSolveId = null;
+    updateLiveAverages();
+}
+
+async function updateLiveAverages() {
+    const allSolves = await getAllFromStore('times');
+    const panel = document.getElementById('live-averages');
+    if (!panel) return;
+    if (allSolves.length === 0) {
+        panel.innerHTML = `<p>ao05: -- | ao12: -- | ao50: -- | ao100: --</p>`;
+        return;
+    }
+
+    const validTimes = allSolves.filter(s => !s.isDNF).map(s => s.time);
+    const lastSolve = allSolves[allSolves.length - 1];
+    
+    const calcAo = (timesArr, n) => {
+        if (timesArr.length < n) return '--';
+        const lastN = timesArr.slice(-n);
+        lastN.sort((a, b) => a - b);
+        lastN.pop(); lastN.shift();
+        const sum = lastN.reduce((acc, v) => acc + v, 0);
+        return (sum / lastN.length).toFixed(2);
+    };
+
+    const displayCurrent = lastSolve.isDNF ? "DNF" : `${lastSolve.time.toFixed(2)}s`;
+
+    panel.innerHTML = `
+        <p>Último: <strong>${displayCurrent}</strong> | 
+           ao05: <strong>${calcAo(validTimes, 5)}s</strong> | 
+           ao12: <strong>${calcAo(validTimes, 12)}s</strong> | 
+           ao50: <strong>${calcAo(validTimes, 50)}s</strong> | 
+           ao100: <strong>${calcAo(validTimes, 100)}s</strong></p>
+    `;
+}
+
+export function clearTimerState() {
+    clearInterval(timerInterval);
+    clearInterval(inspectionInterval);
+    running = false;
+    isInspecting = false;
+    lastSolveId = null;
+    const header = document.querySelector('header');
+    if (header) { header.style.opacity = '1'; header.style.pointerEvents = 'auto'; }
 }
 
 function handleTrigger(e) {
@@ -356,143 +451,4 @@ function startRunningState(display, wrapper, header) {
     timerInterval = setInterval(() => {
         display.textContent = ((Date.now() - startTime) / 1000).toFixed(2);
     }, 10);
-}
-
-// 👑 FUNÇÃO ATUALIZADA: Deteta Recordes Pessoais e Entrada no Top 12 antes de salvar
-async function saveTime(timeValue, isDNF = false) {
-    const allSolves = await getAllFromStore('times');
-    // Filtra apenas os tempos válidos (não DNF) e ordena do menor para o maior
-    const validSolves = allSolves.filter(s => !s.isDNF).sort((a, b) => a.time - b.time);
-
-    let achievementType = null;
-
-    if (!isDNF) {
-        if (validSolves.length === 0) {
-            // Se for o primeiro tempo válido da história do app, é um PB inicial!
-            achievementType = 'pb';
-        } else {
-            const currentPB = validSolves[0].time;
-            
-            if (timeValue < currentPB) {
-                // 👑 NOVO RECORDE PESSOAL ABSOLUTO (Melhor que o #1 atual)
-                achievementType = 'pb';
-            } else if (validSolves.length < 12) {
-                // Ainda não tem 12 tempos no banco, então qualquer tempo novo entra no Top 12
-                achievementType = 'top12';
-            } else if (timeValue < validSolves[11].time) {
-                // Tem mais de 12 tempos, mas o tempo atual é melhor que o 12º colocado
-                achievementType = 'top12';
-            }
-        }
-    }
-
-    const newSolve = {
-        time: timeValue,
-        isDNF: isDNF,
-        date: new Date().toISOString(),
-        scramble: document.getElementById('scramble-generator').textContent
-    };
-    
-    const id = await saveToStore('times', newSolve);
-    lastSolveId = id; 
-    
-    const actionsPanel = document.getElementById('quick-actions-panel');
-    if (actionsPanel) actionsPanel.classList.remove('hidden');
-
-    updateLiveAverages();
-
-    // Dispara o alerta correto (nunca os dois ao mesmo tempo)
-    if (achievementType) {
-        triggerAchievementToast(achievementType, timeValue);
-    }
-}
-
-// Constrói e exibe a notificação flutuante na tela
-function triggerAchievementToast(type, time) {
-    const container = document.getElementById('achievement-toast-container');
-    if (!container) return;
-
-    const toast = document.createElement('div');
-    toast.className = `achievement-toast ${type}`;
-
-    if (type === 'pb') {
-        toast.innerHTML = `
-            <div class="toast-icon">👑</div>
-            <div class="toast-content">
-                <h4>NOVO RECORDE PESSOAL!</h4>
-                <p>Incrível! Você baixou seu melhor tempo para <strong>${time}s</strong></p>
-            </div>
-        `;
-    } else if (type === 'top12') {
-        toast.innerHTML = `
-            <div class="toast-icon">🏆</div>
-            <div class="toast-content">
-                <h4>ENTROU NO TOP 12!</h4>
-                <p>O tempo de <strong>${time}s</strong> entrou para os seus melhores tempos.</p>
-            </div>
-        `;
-    }
-
-    container.appendChild(toast);
-
-    // Remove o elemento após o término das animações de fade out (4 segundos)
-    setTimeout(() => {
-        toast.classList.add('fade-out');
-        setTimeout(() => toast.remove(), 500);
-    }, 3500);
-}
-
-async function markLastAsDNF() {
-    if (!lastSolveId) return;
-    const allSolves = await getAllFromStore('times');
-    const solve = allSolves.find(s => s.id === lastSolveId);
-    if (solve) {
-        solve.isDNF = true;
-        await saveToStore('times', solve);
-        document.getElementById('timer-display').textContent = "DNF";
-        document.getElementById('quick-actions-panel').classList.add('hidden');
-        updateLiveAverages();
-    }
-}
-
-async function deleteLastSolve() {
-    if (!lastSolveId) return;
-    await deleteFromStore('times', lastSolveId);
-    document.getElementById('timer-display').textContent = "0.00";
-    document.getElementById('quick-actions-panel').classList.add('hidden');
-    lastSolveId = null;
-    updateLiveAverages();
-}
-
-async function updateLiveAverages() {
-    const allSolves = await getAllFromStore('times');
-    const panel = document.getElementById('live-averages');
-    if (!panel) return;
-    if (allSolves.length === 0) {
-        panel.innerHTML = `<p>ao05: -- | ao12: -- | ao50: -- | ao100: --</p>`;
-        return;
-    }
-
-    const validTimes = allSolves.filter(s => !s.isDNF).map(s => s.time);
-    const lastSolve = allSolves[allSolves.length - 1];
-    
-    const calcAo = (timesArr, n) => {
-        if (timesArr.length < n) return '--';
-        const lastN = timesArr.slice(-n);
-        lastN.sort((a, b) => a - b);
-        lastN.pop();
-        lastN.shift();
-        const sum = lastN.reduce((acc, v) => acc + v, 0);
-        return (sum / lastN.length).toFixed(2);
-    };
-
-    const displayCurrent = lastSolve.isDNF ? "DNF" : `${lastSolve.time.toFixed(2)}s`;
-
-    panel.innerHTML = `
-        <p>Último: <strong>${displayCurrent}</strong> | 
-           ao05: <strong>${calcAo(validTimes, 5)}s</strong> | 
-           ao12: <strong>${calcAo(validTimes, 12)}s</strong> | 
-           ao50: <strong>${calcAo(validTimes, 50)}s</strong> | 
-           ao100: <strong>${calcAo(validTimes, 100)}s</strong></p>
-    `;
 }
