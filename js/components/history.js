@@ -310,14 +310,48 @@ async function importData() {
         const parsed = JSON.parse(document.getElementById('txt-import-data').value);
         if (parsed.times) {
             const current = await getAllFromStore(REAL_SOLVES_STORE) || [];
+            
+            // Função interna para normalizar qualquer tipo de data para milissegundos (número)
+            const obterTimestampConstante = (dataInput) => {
+                if (!dataInput) return 0; // Evita quebrar se a solve antiga não tiver data
+                const parsedDate = new Date(dataInput);
+                return isNaN(parsedDate.getTime()) ? 0 : parsedDate.getTime();
+            };
+
+            // Mapeia todas as combinações únicas de (Tempo + Scramble + Timestamp) já existentes no seu app
+            const chavesExistentes = new Set(
+                current.map(x => `${x.time.toFixed(2)}|${x.scramble.trim()}|${obterTimestampConstante(x.date)}`)
+            );
+            
+            let inseridos = 0;
+
             for (let s of parsed.times) {
-                if (!current.some(x => x.time === s.time && x.scramble === s.scramble)) {
-                    delete s.id; await saveToStore(REAL_SOLVES_STORE, s);
+                // Normaliza os dados da solve que está vindo do arquivo JSON
+                const tempoFormatado = s.time.toFixed(2);
+                const scrambleFormatado = (s.scramble || '').trim();
+                const timestampFormatado = obterTimestampConstante(s.date);
+                
+                // Cria a chave única da solve candidata
+                const chaveCandidata = `${tempoFormatado}|${scrambleFormatado}|${timestampFormatado}`;
+                
+                // 🛡️ SÓ IMPORTA SE: a combinação exata de Tempo + Scramble + Milissegundo não existir no Set
+                if (!chavesExistentes.has(chaveCandidata)) {
+                    delete s.id; // Remove o ID antigo para o IndexedDB gerar um novo auto-incremental
+                    await saveToStore(REAL_SOLVES_STORE, s);
+                    
+                    // Adiciona ao Set dinamicamente para evitar que resoluções repetidas dentro do PRÓPRIO JSON entrem duplicadas
+                    chavesExistentes.add(chaveCandidata);
+                    inseridos++;
                 }
             }
+            
+            alert(`Importação concluída! ${inseridos} novas resoluções foram adicionadas sem duplicar nada.`);
             window.location.reload();
         }
-    } catch (e) { alert("Erro ao processar arquivo."); }
+    } catch (e) { 
+        alert("Erro crítico ao processar o arquivo de importação. Verifique a estrutura do JSON."); 
+        console.error(e);
+    }
 }
 
 function toggleImportZone() {
