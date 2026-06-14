@@ -1,61 +1,84 @@
 import { getAllFromStore, saveToStore, deleteFromStore, clearAllDatabase } from '../db.js';
 
-// Variável global dinâmica para guardar o nome real da tabela de tempos que descobrirmos
 let REAL_SOLVES_STORE = 'times';
 
-/**
- * 🕵️ Função de Auto-Descoberta de Tabelas do IndexedDB
- */
 async function discoverAndFetchSolves() {
     return new Promise((resolve) => {
         const request = indexedDB.open('CuberTrainerDB');
-
         request.onsuccess = async (event) => {
             const db = event.target.result;
             const storeNames = Array.from(db.objectStoreNames);
             db.close(); 
 
-            console.log("📋 Tabelas reais encontradas no CuberTrainerDB:", storeNames);
-
-            if (storeNames.includes('times')) {
-                REAL_SOLVES_STORE = 'times';
-            } else if (storeNames.includes('solves')) {
-                REAL_SOLVES_STORE = 'solves';
-            }
-
-            console.log(`🎯 Tabela de tempos mapeada com sucesso: '${REAL_SOLVES_STORE}'`);
+            if (storeNames.includes('times')) REAL_SOLVES_STORE = 'times';
+            else if (storeNames.includes('solves')) REAL_SOLVES_STORE = 'solves';
 
             try {
                 const data = await getAllFromStore(REAL_SOLVES_STORE);
                 resolve(data || []);
             } catch (err) {
-                console.error(`Erro ao puxar dados da tabela mapeada '${REAL_SOLVES_STORE}':`, err);
                 resolve([]);
             }
         };
-
-        request.onerror = (event) => {
-            console.error("Erro ao abrir CuberTrainerDB para auto-descoberta:", event.target.error);
-            resolve([]);
-        };
+        request.onerror = () => resolve([]);
     });
+}
+
+// Funções utilitárias para calcular Médias Móveis (Ao5 e Ao12)
+function calcularAoN(solves, n) {
+    if (solves.length < n) return '-';
+    const recentes = solves.slice(0, n);
+    if (recentes.some(s => s.isDNF)) return 'DNF';
+    
+    const tempos = recentes.map(s => s.time).sort((a, b) => a - b);
+    // Remove o melhor e o pior tempo (Regra oficial da WCA)
+    const temposFiltrados = tempos.slice(1, -1);
+    const soma = temposFiltrados.reduce((acc, t) => acc + t, 0);
+    return (soma / temposFiltrados.length).toFixed(2) + 's';
 }
 
 export async function initHistoryScreen() {
     const container = document.getElementById('app-container');
-    
-    // Executa a auto-descoberta antes de montar a tela
     const allSolves = await discoverAndFetchSolves();
     
-    const records = [...allSolves]
-        .filter(s => s && !s.isDNF && s.time) 
-        .sort((a, b) => a.time - b.time)
-        .slice(0, 12);
-        
-    const chronological = [...allSolves].reverse();
+    // Filtra e ordena para estatísticas
+    const validSolves = allSolves.filter(s => s && !s.isDNF);
+    const records = [...validSolves].sort((a, b) => a.time - b.time).slice(0, 12);
+    const chronological = [...allSolves].reverse(); // Mais recentes primeiro
+
+    // Cálculos de Médias Atuais (baseado nas últimas resoluções cronológicas)
+    const currentAo5 = calcularAoN(allSolves.slice(-5).reverse(), 5);
+    const currentAo12 = calcularAoN(allSolves.slice(-12).reverse(), 12);
+    const melhorTempo = records[0] ? records[0].time + 's' : '-';
 
     container.innerHTML = `
         <div class="history-container">
+            <div class="stats-overview-card" style="background: var(--bg-card, #1e1e2e); padding: 15px; border-radius: 12px; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.05);">
+                <h3 style="margin-top:0; font-size:15px; color:var(--text-muted);">📊 Resumo de Performance</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; text-align: center;">
+                    <div style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 8px;">
+                        <span style="font-size:11px; color: var(--text-muted); display:block;">Melhor Single</span>
+                        <strong style="font-size:18px; color: #a6e3a1;">${melhorTempo}</strong>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 8px;">
+                        <span style="font-size:11px; color: var(--text-muted); display:block;">Média Móvel (Ao5)</span>
+                        <strong style="font-size:18px; color: #f9e2af;">${currentAo5}</strong>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 8px;">
+                        <span style="font-size:11px; color: var(--text-muted); display:block;">Média Móvel (Ao12)</span>
+                        <strong style="font-size:18px; color: #89b4fa;">${currentAo12}</strong>
+                    </div>
+                </div>
+
+                <div class="mini-chart-container" style="margin-top:15px; height: 60px; display:flex; align-items:flex-end; gap:3px; background:rgba(0,0,0,0.15); padding: 5px; border-radius:6px;">
+                    ${validSolves.slice(-20).map(s => {
+                        const maxTime = Math.max(...validSolves.slice(-20).map(x => x.time)) || 1;
+                        const heightPct = (s.time / maxTime) * 100;
+                        return `<div style="flex:1; background:#89b4fa; height:${heightPct}%; border-radius:2px; min-height:10%;" title="${s.time}s em ${new Date(s.date).toLocaleDateString()}"></div>`;
+                    }).join('') || '<p style="font-size:12px; color:var(--text-muted); width:100%; text-align:center;">Evolução gráfica visível após os primeiros treinos.</p>'}
+                </div>
+            </div>
+
             <h3>🏆 Recordes Pessoais (Top 12 Melhores Tempos)</h3>
             <div class="records-grid">
                 ${records.map((r, i) => `
@@ -88,26 +111,30 @@ export async function initHistoryScreen() {
             
             <h3>⏱️ Histórico Completo</h3>
             <div class="table-scroll-wrapper">
-                <table class="history-table">
+                <table class="history-table" style="width: 100%; border-collapse: collapse;">
                     <thead>
                         <tr>
-                            <th>Data</th>
-                            <th>Tempo</th>
-                            <th>Scramble</th>
-                            <th style="text-align: center; width: 80px;">Ações</th>
+                            <th style="text-align: left; padding: 10px;">Informações da Solve</th>
+                            <th style="text-align: center; width: 60px;">Ações</th>
                         </tr>
                     </thead>
                     <tbody id="history-table-body">
                         ${chronological.map(s => `
-                            <tr id="row-${s.id}">
-                                <td>${new Date(s.date).toLocaleDateString()}</td>
-                                <td><strong class="${s.isDNF ? 'dnf-text' : ''}">${s.isDNF ? 'DNF' : s.time + 's'}</strong></td>
-                                <td class="scramble-td">${s.scramble}</td>
-                                <td style="text-align: center;">
-                                    <button class="btn-delete-history" data-id="${s.id}" title="Excluir tempo">🗑️</button>
+                            <tr id="row-${s.id}" style="border-top: 1px solid rgba(255,255,255,0.05);">
+                                <td style="padding: 10px 10px 2px 10px;">
+                                    <span style="color: var(--text-muted); font-size: 12px; margin-right: 15px;">📅 ${new Date(s.date).toLocaleDateString()}</span>
+                                    <strong class="${s.isDNF ? 'dnf-text' : ''}" style="font-size: 15px;">⏱️ ${s.isDNF ? 'DNF' : s.time + 's'}</strong>
+                                </td>
+                                <td rowspan="2" style="text-align: center; vertical-align: middle;">
+                                    <button class="btn-delete-history" data-id="${s.id}" title="Excluir tempo" style="background:transparent; border:none; cursor:pointer; font-size:16px;">🗑️</button>
                                 </td>
                             </tr>
-                        `).join('') || '<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding: 20px;">Nenhum treino salvo.</td></tr>'}
+                            <tr id="row-scramble-${s.id}">
+                                <td colspan="1" style="padding: 0px 10px 10px 10px; color: var(--text-muted); font-size: 12px; font-family: monospace; line-height: 1.4; word-break: break-word;">
+                                    <div style="background: rgba(0,0,0,0.15); padding: 6px; border-radius: 4px; color: #cdd6f4;">${s.scramble}</div>
+                                </td>
+                            </tr>
+                        `).join('') || '<tr><td colspan="2" style="text-align:center; color:var(--text-muted); padding: 20px;">Nenhum treino salvo.</td></tr>'}
                     </tbody>
                 </table>
             </div>
@@ -116,7 +143,6 @@ export async function initHistoryScreen() {
                 <button id="btn-reset-system" class="btn-reset-danger">
                     <span class="icon">⚠️</span> Resetar Todos os Dados
                 </button>
-                <p class="danger-text">Isso apagará permanentemente todo o histórico, recordes e forçará a limpeza de caches do celular.</p>
             </div>
         </div>
     `;
@@ -124,8 +150,6 @@ export async function initHistoryScreen() {
     document.getElementById('btn-export-json').addEventListener('click', () => exportData(allSolves));
     document.getElementById('btn-import-json').addEventListener('click', toggleImportZone);
     document.getElementById('btn-confirm-import').addEventListener('click', importData);
-    
-    // Escuta quando o usuário escolhe um arquivo pelo seletor de arquivos
     document.getElementById('file-import-picker').addEventListener('change', handleFileSelect);
 
     const tableBody = document.getElementById('history-table-body');
@@ -133,12 +157,12 @@ export async function initHistoryScreen() {
         tableBody.addEventListener('click', async (e) => {
             if (e.target.classList.contains('btn-delete-history')) {
                 const solveId = e.target.getAttribute('data-id');
-                if (confirm('Deseja realmente apagar este tempo do seu histórico permanentemente?')) {
+                if (confirm('Deseja realmente apagar este tempo do seu histórico?')) {
                     try {
-                        await deleteFromStore(REAL_SOLVES_STORE, solveId);
+                        await deleteFromStore(REAL_SOLVES_STORE, parseInt(solveId) || solveId);
                         initHistoryScreen(); 
                     } catch (err) {
-                        console.error("Erro ao deletar tempo:", err);
+                        console.error(err);
                     }
                 }
             }
@@ -148,107 +172,58 @@ export async function initHistoryScreen() {
     const btnReset = document.getElementById('btn-reset-system');
     if (btnReset) {
         btnReset.addEventListener('click', async () => {
-            const confirmFirst = confirm("ATENÇÃO: Você perderá todos os seus tempos e recordes permanentemente. Deseja continuar?");
-            if (confirmFirst) {
-                const confirmSecond = confirm("Tem certeza absoluta? Esta ação NÃO pode ser desfeita.");
-                if (confirmSecond) {
-                    try {
-                        await clearAllDatabase();
-                        localStorage.clear();
-                        sessionStorage.clear();
-
-                        if ('serviceWorker' in navigator) {
-                            const registrations = await navigator.serviceWorker.getRegistrations();
-                            for (let registration of registrations) {
-                                await registration.unregister();
-                            }
-                        }
-                        
-                        if ('caches' in window) {
-                            const cacheNames = await caches.keys();
-                            for (let name of cacheNames) {
-                                await caches.delete(name);
-                            }
-                        }
-
-                        alert("Sistema resetado com sucesso! O aplicativo será reiniciado totalmente limpo.");
-                        window.location.reload(true);
-
-                    } catch (error) {
-                        console.error("Erro ao resetar o sistema:", error);
-                        alert("Ocorreu um erro ao limpar automaticamente.");
-                    }
+            if (confirm("Você perderá todos os seus tempos e recordes permanentemente. Continuar?") && confirm("Tem certeza absoluta?")) {
+                try {
+                    await clearAllDatabase();
+                    localStorage.clear();
+                    sessionStorage.clear();
+                    window.location.reload();
+                } catch (error) {
+                    alert("Erro ao limpar dados.");
                 }
             }
         });
     }
 }
 
-// Funções auxiliares de Exportação e Importação via Blob nativo
 async function exportData(allSolves) {
     const statusMsg = document.getElementById('backup-status-msg');
     try {
         let allCasesProgress = [];
-
-        try {
-            allCasesProgress = await getAllFromStore('casesState') || []; 
-        } catch (dbError) {
-            console.warn("A store 'casesState' não respondeu. Exportando apenas os tempos disponíveis.");
-            allCasesProgress = [];
-        }
+        try { allCasesProgress = await getAllFromStore('casesState') || []; } catch (e) { allCasesProgress = []; }
         
-        const backupPayload = {
-            times: allSolves,
-            casesProgress: allCasesProgress,
-            exportedAt: new Date().toISOString()
-        };
-        
+        const backupPayload = { times: allSolves, casesProgress: allCasesProgress, exportedAt: new Date().toISOString() };
         const jsonString = JSON.stringify(backupPayload, null, 2);
 
-        // 🔥 NOVIDADE: Copia automaticamente para a Área de Transferência (Clipboard)
         if (navigator.clipboard && navigator.clipboard.writeText) {
             await navigator.clipboard.writeText(jsonString);
             if (statusMsg) {
-                statusMsg.textContent = "📋 Arquivo gerado e código copiado para o Clipboard!";
+                statusMsg.textContent = "📋 Código copiado e arquivo JSON baixado!";
                 statusMsg.style.color = "#00ff66";
             }
         }
 
-        // Continua gerando o download do arquivo .json normalmente
         const blob = new Blob([jsonString], { type: "application/json" });
         const blobUrl = URL.createObjectURL(blob);
-        
         const downloadAnchor = document.createElement('a');
         downloadAnchor.href = blobUrl;
         downloadAnchor.download = `cuber_trainer_backup_${Date.now()}.json`;
-        
         document.body.appendChild(downloadAnchor);
         downloadAnchor.click();
-        
         document.body.removeChild(downloadAnchor);
         URL.revokeObjectURL(blobUrl);
-        
-        console.log("Backup gerado com sucesso via Blob e copiado para o Clipboard!");
-
     } catch (error) {
-        console.error("Erro crítico ao gerar arquivo de exportação:", error);
-        alert("Não foi possível gerar o arquivo de backup.");
+        alert("Erro ao exportar.");
     }
 }
 
-// Função para ler o arquivo selecionado e jogar o conteúdo no textarea
 function handleFileSelect(e) {
     const file = e.target.files[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = function(evt) {
-        // Coloca o conteúdo do arquivo lido direto na caixa de texto
         document.getElementById('txt-import-data').value = evt.target.result;
-        
-        const statusMsg = document.getElementById('backup-status-msg');
-        statusMsg.textContent = "📂 Arquivo carregado! Clique em 'Confirmar Importação'.";
-        statusMsg.style.color = "#33b5e5";
+        document.getElementById('backup-status-msg').textContent = "📂 Arquivo carregado! Clique em 'Confirmar Importação'.";
     };
     reader.readAsText(file);
 }
@@ -257,56 +232,50 @@ async function importData() {
     const rawData = document.getElementById('txt-import-data').value;
     const statusMsg = document.getElementById('backup-status-msg');
     
-    if (!rawData.trim()) {
-        statusMsg.textContent = "❌ Escolha um arquivo ou cole os dados antes de confirmar.";
-        statusMsg.style.color = "#ff4848";
-        return;
-    }
-
     try {
         const parsed = JSON.parse(rawData);
-        
         if (parsed.times && Array.isArray(parsed.times)) {
-            // Importa o histórico de tempos na tabela ativa descoberta dinamicamente
-            for (let solve of parsed.times) {
-                delete solve.id; 
-                await saveToStore(REAL_SOLVES_STORE, solve);
-            }
+            const currentSolves = await getAllFromStore(REAL_SOLVES_STORE) || [];
             
-            // Importa o progresso dos algoritmos mapeando para 'casesState'
-            if (parsed.casesProgress && Array.isArray(parsed.casesProgress)) {
-                for (let caseData of parsed.casesProgress) {
-                    await saveToStore('casesState', caseData).catch(() => {});
+            // 🛡️ MODIFICAÇÃO 1: Evita duplicados comparando propriedades estruturais chaves
+            let novosTemposAdicionados = 0;
+            for (let solve of parsed.times) {
+                const jaExiste = currentSolves.some(existente => 
+                    existente.time === solve.time && 
+                    existente.scramble === solve.scramble &&
+                    new Date(existente.date).getTime() === new Date(solve.date).getTime()
+                );
+
+                if (!jaExiste) {
+                    const solveClean = { ...solve };
+                    delete solveClean.id; // Garante auto-incremento sem colisões
+                    await saveToStore(REAL_SOLVES_STORE, solveClean);
+                    novosTemposAdicionados++;
                 }
             }
             
-            statusMsg.textContent = "✅ Dados importados com sucesso! Atualizando...";
+            if (parsed.casesProgress && Array.isArray(parsed.casesProgress)) {
+                const currentCases = await getAllFromStore('casesState') || [];
+                for (let caseData of parsed.casesProgress) {
+                    const casoExistente = currentCases.find(c => c.uid === caseData.uid);
+                    // Mescla apenas se trouxer contagens mais avançadas ou dados novos
+                    if (!casoExistente || (caseData.successCount + caseData.failCount > casoExistente.successCount + casoExistente.failCount)) {
+                        const caseClean = { ...caseData };
+                        if (casoExistente) caseClean.id = casoExistente.id;
+                        await saveToStore('casesState', caseClean).catch(() => {});
+                    }
+                }
+            }
+            
+            statusMsg.textContent = `✅ Importação concluída! ${novosTemposAdicionados} novas solves adicionadas.`;
             statusMsg.style.color = "#00ff66";
-            setTimeout(() => window.location.reload(), 1000);
-        } else {
-            throw new Error("Formato inválido");
+            setTimeout(() => window.location.reload(), 1200);
         }
     } catch (err) {
-        statusMsg.textContent = "❌ Código de backup inválido ou corrompido.";
-        statusMsg.style.color = "#ff4848";
+        statusMsg.textContent = "❌ JSON inválido ou corrompido.";
     }
 }
 
 function toggleImportZone() {
-    const zone = document.getElementById('import-zone');
-    zone.classList.toggle('hidden');
-    if (!zone.classList.contains('hidden')) {
-        document.getElementById('txt-import-data').focus();
-    }
-}
-
-function showStatus(text, type) {
-    const statusMsg = document.getElementById('backup-status-msg');
-    if (!statusMsg) return;
-    statusMsg.textContent = text;
-    statusMsg.className = `backup-status ${type}`;
-    
-    if (type === 'success') {
-        setTimeout(() => { statusMsg.textContent = ''; }, 4000);
-    }
+    document.getElementById('import-zone').classList.toggle('hidden');
 }
