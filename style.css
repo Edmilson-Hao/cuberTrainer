@@ -2,24 +2,119 @@
    🎨 DESIGN SYSTEM & VARIÁVEIS (Dark Premium)
    ========================================================================== */
 :root {
-    --bg-main: #0a0a0c;
-    --bg-card: #141418;
-    --bg-card-hover: #1c1c24;
-    --accent: #00f2fe;
-    --accent-gradient: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
-    --text-main: #f5f5f7;
-    --text-muted: #8e8e93;
+    /* Base de Cores - Solarized Dark Rigoroso */
+    --bg-main: #002b36;       /* Fundo principal profundo */
+    --bg-card: #073642;       /* Superfície de blocos, caixas e cards */
+    --border-color: #586e75;  /* Bordas em cinza médio sutil */
+
+    /* Sistema de Textos Adaptativo Corrigido */
+    --text-main: #93a1a1;     /* Texto de leitura geral (Tons de cinza-claro/teal) */
+    --text-bright: #fdf6e3;   /* Títulos, segundos em foco e marcas de realce (Creme brilhante) */
+    --text-muted: #a1b5bd;    /* CORRIGIDO: Tom claro e nítido para Scrambles, datas e números secundários */
+
+    /* Cores de Identidade e Ação */
+    --accent: #268bd2;         /* Azul Solarized */
+    --success: #859900;        /* Verde oliva */
+    --danger: #dc322f;         /* Vermelho Solarized para DNF */
+    --warning: #cb4b16;        /* Laranja para +2s */
     
-    --success: #00e676;
-    --success-bg: rgba(0, 230, 118, 0.1);
-    --danger: #ff1744;
-    --danger-bg: rgba(255, 23, 68, 0.1);
-    
-    --radius-sm: 8px;
-    --radius-md: 14px;
-    --radius-lg: 24px;
-    --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    --shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    /* Layout */
+    --radius-sm: 6px;
+    --radius-md: 12px;
+    --shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+    --transition: all 0.2s ease-in-out;
+}
+
+/* --- REGRAS GERAIS DE CONTRASTE --- */
+
+h1, h2, h3, h4, .section-title {
+    color: var(--text-bright) !important;
+}
+
+/* --- AJUSTE GLOBAL DE BOTÕES --- */
+button, .btn {
+    font-weight: 600;
+    transition: var(--transition);
+}
+
+/* Botões coloridos ou ativos ganham obrigatoriamente o texto claro em marfim */
+button.btn-primary, 
+#timer-wrapper-zone button,
+button:has(svg),
+[id*="btn-filter"].active,
+button[style*="background"] {
+    color: var(--text-bright) !important;
+}
+
+.tab-selector button.active {
+    background: var(--accent) !important;
+    color: var(--text-bright) !important;
+    border-color: var(--accent) !important;
+}
+
+/* --- CORREÇÃO: SEUS 12 MELHORES TEMPOS --- */
+
+/* Alvos da grade de melhores tempos */
+#top-12-singles-target div,
+.top-time-card {
+    background: var(--bg-card);
+    border: 1px solid rgba(88, 110, 117, 0.4);
+}
+
+/* O tempo principal (Ex: 28.40s) fica bem aceso e destacado */
+#top-12-singles-target div strong,
+.top-time-card .time-display {
+    color: var(--text-bright) !important;
+}
+
+/* CORREÇÃO DO CONTEXTO: Textos internos menores (Ex: "Solve #28" ou "#25") */
+#top-12-singles-target div span,
+#top-12-singles-target div small,
+.top-time-card span,
+.top-time-card .solve-number {
+    color: var(--text-muted) !important; /* Ganha o novo tom claro e legível */
+    font-weight: 500;
+}
+
+
+/* --- CORREÇÃO: HISTÓRICO DETALHADO --- */
+
+/* Os cards ou linhas do histórico detalhado */
+.history-item,
+#history-list-target > div {
+    background: var(--bg-card) !important;
+    border: 1px solid rgba(88, 110, 117, 0.3) !important;
+    margin-bottom: 8px;
+    border-radius: var(--radius-sm);
+}
+
+/* Número sequencial do solve à esquerda (Ex: #106) */
+.history-item .solve-id,
+#history-list-target > div > span:first-child {
+    color: var(--text-main) !important;
+    font-weight: 600;
+}
+
+/* Tempo resolvido no histórico (Ex: 33.40s ou DNF) */
+.history-item .time-value,
+#history-list-target > div strong,
+#history-list-target > div .time-text {
+    color: var(--text-bright) !important;
+}
+
+/* CORREÇÃO DO CONTEXTO: Scrambles (sequência de movimentos) e data/hora localizados à direita */
+.history-item .scramble-text,
+.history-item .date-text,
+#history-list-target > div .scramble-sub,
+#history-list-target > div span:nth-child(3),
+#history-list-target > div small {
+    color: var(--text-muted) !important; /* Move do cinza invisível para o cinza-claro azulado nítido */
+}
+
+/* Garante legibilidade em qualquer parágrafo ou bloco de texto cru dentro desses containers */
+#history-list-target p, 
+#history-list-target span {
+    color: var(--text-muted);
 }
 
 * {
@@ -152,25 +247,6 @@ main {
     display: flex;
     gap: 10px;
     margin-bottom: 24px;
-}
-
-.tab-selector button {
-    background: var(--bg-card);
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    color: var(--text-muted);
-    padding: 12px 24px;
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    font-weight: 600;
-    transition: var(--transition);
-}
-
-.tab-selector button.active {
-    background: var(--accent-gradient);
-    color: #000;
-    font-weight: 700;
-    border-color: transparent;
-    box-shadow: 0 4px 20px rgba(0, 242, 254, 0.3);
 }
 
 .cases-grid {

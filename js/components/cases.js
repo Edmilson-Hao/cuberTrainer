@@ -44,7 +44,7 @@ export async function initCasesScreen() {
                 <div class="alg-list hidden" id="alg-${uid}">
                     ${item.algs.map(a => `<p class="alg-text">${a}</p>`).join('')}
                 </div>
-                <button class="btn-learned" data-uid="${uid}">${isLearned ? '✓ Aprendido' : 'Aprendido'}</button>
+                <button class="btn-learned" data-uid="${uid}">${isLearned ? '✓ Aprendido' : 'Aprender'}</button>
             </div>
         `;
 

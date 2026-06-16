@@ -396,18 +396,104 @@ function renderHistoryList(filteredSolves, rawSolves) {
 // --- Backup Operations ---
 async function exportData() {
     try {
-        const solves = await getAllFromStore(REAL_SOLVES_STORE) || [];
-        const cases = await getAllFromStore('casesState') || [];
-        const stats = await getAllFromStore('userStats') || [];
-        const backupContainer = { times: solves, casesState: cases, userStats: stats };
-        const jsonString = JSON.stringify(backupContainer, null, 2);
+        const db = await import('../db.js');
         
-        const blob = new Blob([jsonString], { type: "application/json" });
+        // Coleta os tempos e também o estado de aprendizado dos casos do cuberData
+        const rawSolves = await db.getAllFromStore('times') || [];
+        const rawCases = await db.getAllFromStore('cases') || [];
+
+        // OPÇÃO 2: Mapeamento Avançado de Chaves para Redução Drástica de Tamanho
+        const compressedSolves = rawSolves.map(s => ({
+            t: s.time,
+            s: s.scramble,
+            d: s.date,
+            e: s.step || 'all', 
+            f: s.isDNF ? 1 : 0,         // Booleano minificado para 1 ou 0
+            p: s.hasPlusTwo ? 1 : 0,    // Booleano minificado para 1 ou 0
+            c: s.caseId || null,
+            n: s.caseName || null
+        }));
+
+        const compressedCases = rawCases.map(c => ({
+            i: c.id,          // i de ID do caso
+            l: c.isLearned ? 1 : 0 // l de learned
+        }));
+
+        const finalBackupObject = {
+            solves: compressedSolves,
+            cases: compressedCases,
+            version: "2.0"
+        };
+
+        // OPÇÃO 1: Minificação imediata em linha única contínua (Sem espaços extras)
+        const minifiedJsonText = JSON.stringify(finalBackupObject);
+
+        const blob = new Blob([minifiedJsonText], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url; a.download = `backup_cubertrainer_${Date.now()}.json`;
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    } catch (e) { alert("Erro ao exportar."); }
+        a.href = url;
+        a.download = `cuber_backup_${new Date().toISOString().slice(0,10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        console.error("Erro ao exportar dados", err);
+        alert("Falha ao gerar o arquivo de backup de dados.");
+    }
+}
+
+async function importData() {
+    const txtArea = document.getElementById('txt-import-data');
+    if (!txtArea || !txtArea.value.trim()) {
+        alert("Cole o conteúdo do JSON ou envie um arquivo antes de confirmar.");
+        return;
+    }
+
+    try {
+        const parsed = JSON.parse(txtArea.value.trim());
+        const db = await import('../db.js');
+
+        // Validação se o arquivo importado usa o padrão antigo ou o novo padrão otimizado com chaves curtas
+        if (parsed.solves && Array.isArray(parsed.solves)) {
+            
+            // 1. Descomprime e restaura o Histórico de Solves
+            for (const item of parsed.solves) {
+                const isCompressed = item.t !== undefined;
+                const restoredSolve = {
+                    time: isCompressed ? item.t : item.time,
+                    scramble: isCompressed ? item.s : item.scramble,
+                    date: isCompressed ? item.d : item.date,
+                    step: isCompressed ? (item.e || 'all') : (item.step || 'all'),
+                    isDNF: isCompressed ? (item.f === 1) : !!item.isDNF,
+                    hasPlusTwo: isCompressed ? (item.p === 1) : !!item.hasPlusTwo,
+                    caseId: isCompressed ? item.c : (item.caseId || null),
+                    caseName: isCompressed ? item.n : (item.caseName || null)
+                };
+                await db.saveToStore('times', restoredSolve);
+            }
+
+            // 2. Descomprime e restaura o Estado de Aprendizado de F2L/OLL/PLL
+            if (parsed.cases && Array.isArray(parsed.cases)) {
+                for (const item of parsed.cases) {
+                    const isCompressed = item.i !== undefined;
+                    const caseRecord = {
+                        id: isCompressed ? item.i : item.id,
+                        isLearned: isCompressed ? (item.l === 1) : !!item.isLearned
+                    };
+                    await db.saveToStore('cases', caseRecord);
+                }
+            }
+
+            alert("Dados mesclados e importados com sucesso!");
+            txtArea.value = "";
+            // Recarrega a tela de histórico para atualizar os quadros visuais imediatamente
+            initHistoryScreen();
+        } else {
+            alert("Formato de backup inválido.");
+        }
+    } catch (e) {
+        console.error(e);
+        alert("Erro ao ler dados inseridos. Certifique-se de que é um JSON válido.");
+    }
 }
 
 function handleFileSelect(e) {
@@ -415,16 +501,4 @@ function handleFileSelect(e) {
     const reader = new FileReader();
     reader.onload = (evt) => { document.getElementById('txt-import-data').value = evt.target.result; };
     reader.readAsText(file);
-}
-
-async function importData() {
-    try {
-        const parsed = JSON.parse(document.getElementById('txt-import-data').value);
-        if (parsed.times) {
-            for (let s of parsed.times) {
-                delete s.id; await saveToStore(REAL_SOLVES_STORE, s);
-            }
-            window.location.reload();
-        }
-    } catch (e) { alert("JSON Inválido."); }
 }
