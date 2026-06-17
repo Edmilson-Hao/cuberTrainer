@@ -249,6 +249,16 @@ main {
     margin-bottom: 24px;
 }
 
+/* No seu arquivo CSS, garanta que a classe hidden tenha prioridade absoluta */
+.tab-content {
+    display: none !important;
+}
+
+.tab-content.active {
+    display: flex !important; /* ou block, dependendo do seu layout */
+    flex-direction: column;
+}
+
 .cases-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
@@ -1128,4 +1138,38 @@ select {
 .timer-big.ready-to-trigger {
     color: #4cd964 !important; /* Verde oficial de campeonato */
     transition: color 0.05s ease;
+}
+
+/* Zona de Perigo - Redefinição do Sistema */
+.danger-zone-container {
+    margin-top: 30px;
+    padding: 15px;
+    border-radius: var(--radius-md, 8px);
+    background: rgba(220, 50, 47, 0.03);
+    border: 1px solid rgba(220, 50, 47, 0.2);
+    text-align: center;
+}
+
+.danger-text {
+    font-size: 11px;
+    color: var(--danger);
+    margin-top: 0;
+    margin-bottom: 12px;
+}
+
+.btn-reset-danger {
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid var(--danger);
+    padding: 8px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: var(--radius-sm, 4px);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-reset-danger:hover, .btn-reset-danger:active {
+    background: var(--danger);
+    color: var(--text-bright);
 }

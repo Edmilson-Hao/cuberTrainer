@@ -20,20 +20,26 @@ document.addEventListener('DOMContentLoaded', async () => {
         // 2. Renderiza as informações do cabeçalho / progresso
         renderDashboard();
 
-        // Configura os botões de navegação da navbar
+        // Configura os botões de navegação da navbar (Otimizado para Mobile e Desktop)
         document.querySelectorAll('nav button').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            const handleNavigation = (e) => {
+                e.preventDefault();
+                
                 // Remove estados e listeners globais do timer antes de trocar de tela
                 clearTimerState();
 
                 document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-                e.target.classList.add('active');
+                btn.classList.add('active');
                 
-                const targetScreen = e.target.getAttribute('data-screen');
+                const targetScreen = btn.getAttribute('data-screen');
                 if (screens[targetScreen]) {
                     screens[targetScreen]();
                 }
-            });
+            };
+
+            // Escuta tanto clique quanto toque físico no smartphone sem atrasos
+            btn.addEventListener('click', handleNavigation);
+            btn.addEventListener('touchstart', handleNavigation, { passive: false });
         });
 
         // Força o estado limpo inicial e carrega a tela do cronômetro de forma segura
@@ -41,7 +47,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         initTimerScreen();
 
         // Inicializa o Service Worker para suporte PWA offline
-        // Antes: navigator.serviceWorker.register('/sw.js')
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('./sw.js')
                 .then(reg => console.log('SW registrado com sucesso!', reg))
@@ -51,12 +56,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (error) {
         console.error("Erro crítico na inicialização do aplicativo:", error);
     } finally {
-        // 🏁 Oculta a Splash Screen rapidamente para não irritar o usuário
+        // 🏁 Oculta a Splash Screen rapidamente
         const splash = document.getElementById('splash-screen');
         if (splash) {
             setTimeout(() => {
                 splash.classList.add('fade-out');
-            }, 400); // Reduzido de 1200ms para 400ms
+            }, 400);
         }
     }
 });

@@ -10,12 +10,49 @@ export async function initCasesScreen() {
     const stateMap = new Map(states.map(s => [s.uid, s]));
 
     container.innerHTML = `
-        <div class="cases-screen">
-            <div class="tab-selector">
-                <button class="${currentTab === 'f2l' ? 'active':''}" id="btn-tab-f2l">F2L</button>
-                <button class="${currentTab === 'oll' ? 'active':''}" id="btn-tab-oll">OLL</button>
-                <button class="${currentTab === 'pll' ? 'active':''}" id="btn-tab-pll">PLL</button>
+        <div class="cases-screen" style="padding: 15px; box-sizing: border-box;">
+            
+            <div class="tab-selector" style="display: flex; gap: 6px; background: rgba(2, 6, 23, 0.5); padding: 5px; border-radius: var(--radius-sm, 6px); margin-bottom: 20px; border: 1px solid rgba(88, 110, 117, 0.2);">
+                <button class="${currentTab === 'f2l' ? 'active':''}" id="btn-tab-f2l" style="
+                    flex: 1; 
+                    padding: 8px 12px; 
+                    font-size: 13px; 
+                    font-weight: 600; 
+                    border: none; 
+                    border-radius: var(--radius-sm, 4px); 
+                    cursor: pointer; 
+                    background: ${currentTab === 'f2l' ? 'var(--accent)' : 'transparent'}; 
+                    color: ${currentTab === 'f2l' ? 'var(--text-bright)' : 'var(--text-main)'};
+                    transition: all 0.2s ease;
+                ">F2L</button>
+                
+                <button class="${currentTab === 'oll' ? 'active':''}" id="btn-tab-oll" style="
+                    flex: 1; 
+                    padding: 8px 12px; 
+                    font-size: 13px; 
+                    font-weight: 600; 
+                    border: none; 
+                    border-radius: var(--radius-sm, 4px); 
+                    cursor: pointer; 
+                    background: ${currentTab === 'oll' ? 'var(--accent)' : 'transparent'}; 
+                    color: ${currentTab === 'oll' ? 'var(--text-bright)' : 'var(--text-main)'};
+                    transition: all 0.2s ease;
+                ">OLL</button>
+                
+                <button class="${currentTab === 'pll' ? 'active':''}" id="btn-tab-pll" style="
+                    flex: 1; 
+                    padding: 8px 12px; 
+                    font-size: 13px; 
+                    font-weight: 600; 
+                    border: none; 
+                    border-radius: var(--radius-sm, 4px); 
+                    cursor: pointer; 
+                    background: ${currentTab === 'pll' ? 'var(--accent)' : 'transparent'}; 
+                    color: ${currentTab === 'pll' ? 'var(--text-bright)' : 'var(--text-main)'};
+                    transition: all 0.2s ease;
+                ">PLL</button>
             </div>
+            
             <div class="cases-grid" id="cases-grid-target"></div>
         </div>
     `;

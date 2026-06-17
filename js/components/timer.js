@@ -20,6 +20,10 @@ let currentSessionTimes = [];
 let currentTimerStep = 'all'; 
 let currentCaseDetected = null;
 
+// Variáveis de controle de movimento por toque:
+let touchStartX = 0;
+let touchStartY = 0;
+
 export function clearTimerState() {
     if (timerInterval) {
         clearInterval(timerInterval);
@@ -171,9 +175,11 @@ function handleKeyUp(e) {
 }
 
 function handleTouchStart(e) {
-    // Se clicou nos botões de ação rápida, não dispara o cronômetro
     if (e.target.closest('#quick-actions-panel') || e.target.closest('.timer-controls')) return;
-    e.preventDefault();
+    
+    // Captura as coordenadas iniciais do toque
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
 
     if (running) {
         triggerTimer();
@@ -184,22 +190,38 @@ function handleTouchStart(e) {
     if (isInspecting) return;
 
     const display = document.getElementById('timer-display');
-    if (display) display.classList.add('ready-to-trigger');
+    if (display) display.style.color = 'var(--success)';
     isReadyToStart = true;
 }
 
 function handleTouchEnd(e) {
     if (e.target.closest('#quick-actions-panel') || e.target.closest('.timer-controls')) return;
-    e.preventDefault();
+    
+    // Captura onde o toque terminou
+    const touchEndX = e.changedTouches[0].clientX;
+    const touchEndY = e.changedTouches[0].clientY;
+
+    // Calcula a distância do movimento
+    const diffX = Math.abs(touchEndX - touchStartX);
+    const diffY = Math.abs(touchEndY - touchStartY);
+
+    // Se o usuário moveu o dedo mais de 15 pixels verticalmente ou horizontalmente, considera um arrasto de tela e cancela o timer!
+    if (diffY > 15 || diffX > 15) {
+        isReadyToStart = false;
+        const display = document.getElementById('timer-display');
+        if (display) display.style.color = 'var(--text-bright)';
+        return;
+    }
     
     if (justStopped) {
         justStopped = false;
         return;
     }
+    
     if (isReadyToStart) {
         isReadyToStart = false;
         const display = document.getElementById('timer-display');
-        if (display) display.classList.remove('ready-to-trigger');
+        if (display) display.style.color = 'var(--text-bright)';
         triggerTimer();
     }
 }
@@ -427,4 +449,8 @@ async function updateLiveAverages() {
             <span>ao100: <strong style="color: ${resAo100.color}; font-family: monospace;">${resAo100.text || '--'}</strong></span>
         </div>
     `;
+}
+
+export function getCurrentSessionSolves() {
+    return currentSessionTimes;
 }
