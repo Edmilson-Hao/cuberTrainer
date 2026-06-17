@@ -5,6 +5,8 @@ let REAL_SOLVES_STORE = 'times';
 let currentFilter = 'all'; 
 let evolutionChart = null;
 
+let localPeer = null;
+
 async function discoverAndFetchSolves() {
     try {
         const data = await getAllFromStore(REAL_SOLVES_STORE);
@@ -173,6 +175,22 @@ export async function initHistoryScreen() {
             </div>
 
             <div style="margin-top: 30px; border-top: 1px solid #1e293b; padding-top: 20px; box-sizing: border-box; width: 100%;">
+                <button id="btn-forcar-update" style="
+                    background: rgba(38, 139, 210, 0.1); 
+                    border: 1px solid rgba(38, 139, 210, 0.3); 
+                    color: var(--accent); 
+                    font-size: 11px; 
+                    font-weight: 700; 
+                    padding: 8px 12px; 
+                    border-radius: var(--radius-sm, 4px); 
+                    cursor: pointer; 
+                    transition: all 0.2s ease; 
+                    width: 100%; 
+                    margin-bottom: 10px;
+                    text-align: center;
+                ">
+                    🔄 Forçar Atualização do Código (Preservar Histórico)
+                </button>
                 <button id="btn-toggle-backup-zone" style="background: transparent; border: 1px solid #1e293b; color: var(--text-muted); font-size: 12px; font-weight:600; padding: 8px 12px; border-radius: var(--radius-sm); cursor: pointer; transition: var(--transition); width: 100%; text-align: center;">⚙️ Gerenciar Dados (Backup / Reset)</button>
                 
                 <div id="import-export-zone" class="hidden" style="margin-top: 15px; background: rgba(2, 6, 23, 0.4); border: 1px solid #1e293b; padding: 15px; border-radius: var(--radius-sm); box-sizing: border-box; width: 100%;">
@@ -193,6 +211,29 @@ export async function initHistoryScreen() {
                         ⚠️ Limpar Banco de Dados
                     </button>
                 </div>
+            </div>
+        </div>
+
+        <div style="margin-top: 15px; background: rgba(2, 6, 23, 0.6); border: 1px solid #1e293b; padding: 15px; border-radius: var(--radius-sm); box-sizing: border-box; width: 100%;">
+            <h4 style="font-size: 12px; color: var(--accent); margin-top: 0; margin-bottom: 5px; text-transform: uppercase;">⚡ Sincronização Direta P2P</h4>
+            <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Transfira dados instantaneamente entre PC e Celular sem cabos ou arquivos.</p>
+            
+            <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
+                <button id="btn-p2p-gerar" style="background: #268bd2; border:none; color:#fff; font-size:11px; padding:8px 12px; border-radius:4px; font-weight:600; cursor:pointer; flex: 1;">
+                    🖥️ Enviar deste PC
+                </button>
+                
+                <div style="display: flex; flex: 1; gap: 4px; min-width: 160px;">
+                    <input type="number" id="input-p2p-code" placeholder="Código de 4 dígitos" style="background:#020617; border: 1px solid #1e293b; color:#fff; font-size:11px; padding:6px; border-radius:4px; width:70%; text-align:center; font-family:monospace;">
+                    <button id="btn-p2p-conectar" style="background: rgba(16, 185, 129, 0.2); border:1px solid rgba(16, 185, 129, 0.4); color:#10b981; font-size:11px; padding:6px; border-radius:4px; font-weight:600; cursor:pointer; width:30%;">
+                        📱 OK
+                    </button>
+                </div>
+            </div>
+
+            <div id="p2p-container-display" style="text-align: center; margin-top: 10px;">
+                <span id="p2p-status" style="font-size: 11px; color: var(--text-muted); font-family: monospace;">Sistema pronto para pareamento.</span>
+                <div id="p2p-code-display"></div>
             </div>
         </div>
     `;
@@ -222,6 +263,11 @@ export async function initHistoryScreen() {
 
     document.getElementById('btn-danger-clear-db').onclick = async () => {
         if (confirm("⚠️ ATENÇÃO MÁXIMA!! Isso apagará TODOS os seus tempos e algoritmos do navegador!\n\nTem certeza absoluta que deseja prosseguir?")) {
+            // ✅ CORREÇÃO: Mata qualquer conexão WebRTC aberta antes de resetar e recarregar a página
+            if (typeof encerrarConexaoP2P === 'function') {
+                encerrarConexaoP2P();
+            }
+            
             await clearAllDatabase();
             alert("O aplicativo foi redefinido com sucesso.");
             window.location.reload();
@@ -232,6 +278,12 @@ export async function initHistoryScreen() {
     renderHistoryList(filteredSolves, rawSolves);
     renderEvolutionChart(filteredSolves);
     calculateAndRenderWeaknesses(rawSolves);
+    document.getElementById('btn-p2p-gerar').onclick = iniciarEmissorP2P;
+    document.getElementById('btn-p2p-conectar').onclick = conectarComoReceptorP2P;
+    const btnUpdate = document.getElementById('btn-forcar-update');
+        if (btnUpdate) {
+            btnUpdate.onclick = forcarAtualizacaoSistema;
+        }
 }
 
 // ==========================================================================
@@ -408,22 +460,36 @@ function calculateAndRenderWeaknesses(allSolves) {
 
 function renderEvolutionChart(solves) {
     const ctx = document.getElementById('chart-evolution');
+    
+    // ✅ GUARDA DE SEGURANÇA 1: Se o elemento canvas não existir no DOM, aborta imediatamente
     if (!ctx) return;
 
     if (evolutionChart) {
-        evolutionChart.destroy();
+        try {
+            evolutionChart.destroy();
+        } catch (e) {
+            console.warn("Erro ao destruir gráfico antigo:", e);
+        }
     }
 
+    // Filtra os solves válidos e ordena por data
     const validSolves = [...solves]
-        .filter(s => !s.isDNF)
+        .filter(s => s && !s.isDNF)
         .sort((a, b) => new Date(a.date) - new Date(b.date));
 
+    // ✅ GUARDA DE SEGURANÇA 2: Se não houver dados suficientes, limpa o canvas de forma segura e para
     if (validSolves.length < 2) {
-        const ctxCtx = ctx.getContext('2d');
-        ctxCtx.fillStyle = '#8e8e93';
-        ctxCtx.font = '11px monospace';
-        ctxCtx.textAlign = 'center';
-        ctxCtx.fillText('Gere mais dados para plotar o gráfico.', ctx.canvas.width / 2, ctx.canvas.height / 2);
+        const context = ctx.getContext('2d');
+        if (context) {
+            // Garante que o canvas está limpo antes de desenhar o texto
+            context.clearRect(0, 0, ctx.width || 300, ctx.height || 160);
+            context.fillStyle = '#8e8e93';
+            context.font = '11px monospace';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            // Usa valores estáticos seguros caso o bounding box ainda não esteja calculado
+            context.fillText('Gere mais dados para plotar o gráfico.', (ctx.width || 300) / 2, (ctx.height || 160) / 2);
+        }
         return;
     }
 
@@ -431,31 +497,36 @@ function renderEvolutionChart(solves) {
     const labels = dataDisplay.map((_, idx) => `#${idx + 1}`);
     const values = dataDisplay.map(s => s.time);
 
-    evolutionChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [{
-                data: values,
-                borderColor: '#268bd2',
-                borderWidth: 2,
-                backgroundColor: 'rgba(38, 139, 210, 0.06)',
-                fill: true,
-                tension: 0.1,
-                pointRadius: dataDisplay.length > 50 ? 0 : 2,
-                pointBackgroundColor: '#268bd2'
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: {
-                x: { grid: { display: false }, ticks: { color: '#657b83', font: { size: 9 } } },
-                y: { grid: { color: 'rgba(88, 110, 117, 0.1)' }, ticks: { color: '#657b83', font: { size: 9 } } }
+    // Cria a instância do gráfico apenas se passou pelas validações
+    try {
+        evolutionChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: values,
+                    borderColor: '#268bd2',
+                    borderWidth: 2,
+                    backgroundColor: 'rgba(38, 139, 210, 0.06)',
+                    fill: true,
+                    tension: 0.1,
+                    pointRadius: dataDisplay.length > 50 ? 0 : 2,
+                    pointBackgroundColor: '#268bd2'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { display: false }, ticks: { color: '#657b83', font: { size: 9 } } },
+                    y: { grid: { color: 'rgba(88, 110, 117, 0.1)' }, ticks: { color: '#657b83', font: { size: 9 } } }
+                }
             }
-        }
-    });
+        });
+    } catch (chartError) {
+        console.error("Falha ao inicializar Chart.js:", chartError);
+    }
 }
 
 function renderTop12Singles(filteredSolves, rawSolves) {
@@ -556,4 +627,266 @@ function renderHistoryList(filteredSolves, rawSolves) {
             }
         });
     });
+}
+
+/**
+ * 🌐 Inicializa o canal P2P como Emissor (Gerador do Código)
+ */
+async function iniciarEmissorP2P() {
+    const statusLabel = document.getElementById('p2p-status');
+    const codeDisplay = document.getElementById('p2p-code-display');
+    
+    if (!statusLabel || !codeDisplay) return;
+
+    // Se já existia uma instância ativa, destrói para resetar portas
+    if (localPeer) {
+        encerrarConexaoP2P();
+    }
+    
+    if (typeof Peer === 'undefined') {
+        statusLabel.innerText = "Carregando protocolo de comunicação...";
+        try {
+            await carregarScriptPeerJS();
+        } catch (err) {
+            statusLabel.innerText = "Erro ao baixar protocolo. Verifique sua conexão.";
+            return;
+        }
+    }
+    
+    statusLabel.innerText = "Gerando chave única no servidor...";
+    
+    // Gerar código de 4 dígitos baseado no tempo para mitigar colisões imediatas
+    const codigoUnico = Math.floor(1000 + Math.random() * 9000).toString();
+    
+    try {
+        // Inicializa o Peer com tratamento estrito de reconexão e erros
+        localPeer = new Peer(`cuber-trainer-${codigoUnico}`, {
+            debug: 1,
+            secure: true
+        });
+
+        localPeer.on('open', (id) => {
+            statusLabel.innerText = "Aguardando conexão do smartphone...";
+            codeDisplay.innerHTML = `
+                <div style="font-size: 24px; font-weight: 800; color: var(--accent); letter-spacing: 4px; margin: 10px 0;">${codigoUnico}</div>
+                <p style="font-size: 11px; color: var(--text-muted);">Digite este código no celular para parear.</p>
+            `;
+        });
+
+        // Quando o celular conectar com sucesso no PC
+        localPeer.on('connection', (conn) => {
+            statusLabel.innerText = "Dispositivo conectado! Transferindo histórico...";
+            codeDisplay.innerHTML = ""; // Limpa o número da tela
+            
+            conn.on('open', async () => {
+                try {
+                    const db = await import('../db.js');
+                    const rawSolves = await db.getAllFromStore('times') || [];
+                    const rawCases = await db.getAllFromStore('casesState') || [];
+
+                    // Dispara o payload via P2P local puro
+                    conn.send({
+                        solves: rawSolves,
+                        cases: rawCases
+                    });
+                    
+                    statusLabel.innerHTML = "<span style='color: var(--success);'>✅ Dados enviados com sucesso!</span>";
+                } catch (dbErr) {
+                    statusLabel.innerText = "Erro ao ler banco local.";
+                } finally {
+                    setTimeout(() => encerrarConexaoP2P(), 3500);
+                }
+            });
+        });
+
+        localPeer.on('error', (err) => {
+            console.error("Erro no PeerJS:", err.type, err);
+            if (err.type === 'unavailable-id') {
+                statusLabel.innerText = "Código em conflito no servidor. Tentando gerar outro...";
+                setTimeout(() => iniciarEmissorP2P(), 1000);
+            } else {
+                statusLabel.innerText = `Erro de pareamento (${err.type}). Tente novamente.`;
+                encerrarConexaoP2P();
+            }
+        });
+
+    } catch (e) {
+        console.error(e);
+        statusLabel.innerText = "Falha crítica ao iniciar canal P2P.";
+    }
+}
+
+/**
+ * 📱 Conecta ao PC como Receptor (Consumidor do Código)
+ */
+async function conectarComoReceptorP2P() {
+    const inputCodigo = document.getElementById('input-p2p-code');
+    const statusLabel = document.getElementById('p2p-status');
+    const codeDisplay = document.getElementById('p2p-code-display');
+    
+    if (!inputCodigo || inputCodigo.value.length !== 4) {
+        alert("Insira um código válido de 4 dígitos.");
+        return;
+    }
+
+    if (localPeer) {
+        encerrarConexaoP2P();
+    }
+
+    if (typeof Peer === 'undefined') {
+        statusLabel.innerText = "Carregando protocolo de comunicação...";
+        await carregarScriptPeerJS();
+    }
+
+    statusLabel.innerText = "Buscando computador na rede local...";
+    if (codeDisplay) codeDisplay.innerHTML = "";
+    
+    localPeer = new Peer({ secure: true });
+    
+    localPeer.on('open', () => {
+        const targetId = `cuber-trainer-${inputCodigo.value}`;
+        const conn = localPeer.connect(targetId, {
+            reliable: true
+        });
+        
+        conn.on('open', () => {
+            statusLabel.innerText = "Conectado! Aguardando payload...";
+        });
+
+        conn.on('data', async (data) => {
+            statusLabel.innerText = "Processando e mesclando dados recebidos...";
+            
+            try {
+                const db = await import('../db.js');
+                
+                if (data.solves && Array.isArray(data.solves)) {
+                    for (const solve of data.solves) {
+                        await db.saveToStore('times', solve);
+                    }
+                }
+                
+                if (data.cases && Array.isArray(data.cases)) {
+                    for (const c of data.cases) {
+                        await db.saveToStore('casesState', c);
+                    }
+                }
+
+                statusLabel.innerHTML = "<span style='color: var(--success);'>✅ Histórico sincronizado com sucesso!</span>";
+                inputCodigo.value = "";
+                
+            } catch (error) {
+                statusLabel.innerText = "Falha ao gravar dados recebidos.";
+            } finally {
+                setTimeout(() => encerrarConexaoP2P(), 3500);
+            }
+        });
+
+        // Timeout de segurança se o ID não responder na rede
+        setTimeout(() => {
+            if (localPeer && statusLabel.innerText.includes("Buscando")) {
+                statusLabel.innerText = "Computador não encontrado. Verifique o código.";
+                encerrarConexaoP2P();
+            }
+        }, 8000);
+    });
+
+    localPeer.on('error', (err) => {
+        console.error(err);
+        statusLabel.innerText = "Não foi possível conectar ao PC emissor.";
+        encerrarConexaoP2P();
+    });
+}
+
+/**
+ * 🧹 Desconecta portas e limpa listeners com atualização segura da interface
+ */
+function encerrarConexaoP2P() {
+    if (localPeer) {
+        try {
+            localPeer.disconnect();
+            localPeer.destroy();
+        } catch (e) {
+            console.error("Erro ao destruir peer:", e);
+        }
+        localPeer = null;
+    }
+    
+    // Atualiza a interface gráfica de status de forma sutil
+    const statusLabel = document.getElementById('p2p-status');
+    const codeDisplay = document.getElementById('p2p-code-display');
+    
+    if (statusLabel && !statusLabel.innerHTML.includes("✅")) {
+        statusLabel.innerText = "Sincronização finalizada.";
+    }
+    if (codeDisplay) codeDisplay.innerHTML = "";
+    
+    // ✅ CORREÇÃO: Força a reinicialização limpa e completa da tela de Histórico.
+    // Isso garante que o Chart.js encontre o canvas reconstruído no DOM e evita o erro de 'width'
+    setTimeout(() => {
+        if (typeof initHistoryScreen === 'function') {
+            initHistoryScreen();
+        }
+    }, 500);
+}
+
+/**
+ * 🔌 Injeta a biblioteca PeerJS dinamicamente no DOM apenas quando necessária
+ */
+function carregarScriptPeerJS() {
+    return new Promise((resolve, reject) => {
+        if (typeof Peer !== 'undefined') return resolve();
+        
+        const script = document.createElement('script');
+        script.src = "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js";
+        script.async = true;
+        
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error("Não foi possível carregar o PeerJS"));
+        
+        document.head.appendChild(script);
+    });
+}
+
+/**
+ * 🔄 Força a atualização dos arquivos do sistema (Limpa o Cache do SW)
+ * Preserva 100% dos dados salvos no IndexedDB
+ */
+async function forcarAtualizacaoSistema() {
+    const statusLabel = document.getElementById('p2p-status'); // Reaproveita o label de status para feedback
+    
+    if (statusLabel) {
+        statusLabel.innerText = "Buscando novas atualizações de código...";
+    }
+
+    try {
+        // 1. Verifica se o navegador suporta Service Workers e Cache Storage
+        if ('caches' in window && 'serviceWorker' in navigator) {
+            // 2. Pega todas as chaves de cache do sistema
+            const cacheNames = await caches.keys();
+            
+            // 3. Deleta todos os caches de arquivos (HTML, CSS, JS)
+            await Promise.all(
+                cacheNames.map(cacheName => caches.delete(cacheName))
+            );
+
+            // 4. Força os Service Workers ativos a se desregistrarem
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            for (const registration of registrations) {
+                await registration.unregister();
+            }
+        }
+
+        if (statusLabel) {
+            statusLabel.innerHTML = "<span style='color: var(--success);'>✅ Sistema atualizado! Recarregando...</span>";
+        }
+
+        // 5. Dá um reload limpando o cache nativo do navegador (Hard Reload via código)
+        setTimeout(() => {
+            window.location.reload(true);
+        }, 1000);
+
+    } catch (err) {
+        console.error("Erro ao atualizar arquivos:", err);
+        alert("Não foi possível atualizar automaticamente. Tente dar um Ctrl+F5.");
+    }
 }
