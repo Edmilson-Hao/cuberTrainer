@@ -7,6 +7,9 @@ let evolutionChart = null;
 
 let localPeer = null;
 
+// ==========================================
+// 1. FUNÇÕES AUXILIARES DE BUSCA E CÁLCULO
+// ==========================================
 async function discoverAndFetchSolves() {
     try {
         const data = await getAllFromStore(REAL_SOLVES_STORE);
@@ -44,246 +47,476 @@ function encontrarMelhorAoN(solves, n) {
 
     return melhorMeda === Infinity ? 'DNF' : melhorMeda.toFixed(2) + 's';
 }
+// ==========================================
+// 2. SISTEMA DE SINCRONIZAÇÃO P2P E UTILS
+// ==========================================
+async function garantirPeerJS() {
+    if (typeof Peer === 'undefined') {
+        console.log("Injetando PeerJS dinamicamente via CDN estável...");
+        await new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
+            script.onload = () => {
+                console.log("PeerJS carregado e pronto para uso.");
+                resolve();
+            };
+            script.onerror = () => reject(new Error("Falha ao carregar os scripts do PeerJS. Verifique a ligação à internet."));
+            document.head.appendChild(script);
+        });
+    }
+}
 
+async function conectarComoReceptorP2P(codigoAlvo) {
+    const statusLabel = document.getElementById('p2p-status');
+    const inputCodigo = document.getElementById('p2p-code-input');
+
+    if (statusLabel) statusLabel.innerText = "Verificando dependências de rede...";
+
+    try {
+        await garantirPeerJS();
+    } catch (loaderError) {
+        console.error(loaderError);
+        if (statusLabel) statusLabel.innerHTML = `<span style='color: var(--danger);'>❌ Erro: ${loaderError.message}</span>`;
+        return;
+    }
+
+    if (statusLabel) statusLabel.innerText = "Localizando par na rede...";
+
+    if (localPeer) {
+        try { localPeer.destroy(); } catch (e) {}
+        localPeer = null;
+    }
+
+    // O receptor não precisa de ID fixo, ele apenas inicia e conecta no código numérico do alvo
+    localPeer = new Peer();
+
+    localPeer.on('open', () => {
+        const conn = localPeer.connect(codigoAlvo);
+
+        conn.on('open', () => {
+            if (statusLabel) statusLabel.innerText = "Conectado! A aguardar dados...";
+        });
+
+        conn.on('data', async (data) => {
+            if (statusLabel) statusLabel.innerText = "A mesclar histórico e progresso de flashcards...";
+            
+            try {
+                const db = await import('../db.js');
+                
+                if (data.solves && Array.isArray(data.solves)) {
+                    for (const solve of data.solves) {
+                        await db.saveToStore(REAL_SOLVES_STORE, solve);
+                    }
+                }
+                
+                if (data.cases && Array.isArray(data.cases)) {
+                    for (const caseState of data.cases) {
+                        await db.saveToStore('casesState', caseState);
+                    }
+                }
+
+                if (statusLabel) statusLabel.innerHTML = "<span style='color: var(--success);'>✅ Dispositivo 100% Sincronizado!</span>";
+                if (inputCodigo) inputCodigo.value = "";
+                
+            } catch (error) {
+                console.error(error);
+                if (statusLabel) statusLabel.innerText = "Falha ao gravar dados recebidos.";
+            } finally {
+                setTimeout(() => {
+                    if (localPeer) {
+                        try { localPeer.destroy(); } catch (e) {}
+                        localPeer = null;
+                    }
+                    if (statusLabel) statusLabel.innerText = "Sincronização concluída.";
+
+                    import('./dashboard.js').then(dash => {
+                        if (dash && typeof dash.renderDashboard === 'function') {
+                            dash.renderDashboard();
+                        }
+                    });
+                    
+                    initHistoryScreen();
+                }, 3500);
+            }
+        });
+
+        conn.on('error', (err) => {
+            console.error(err);
+            if (statusLabel) statusLabel.innerText = "Erro na conexão com o par.";
+        });
+    });
+
+    localPeer.on('error', (err) => {
+        console.error(err);
+        if (statusLabel) statusLabel.innerText = "Não foi possível conectar. Verifique o código.";
+    });
+}
+
+async function gerarCodigoParaTransmissaoP2P() {
+    const statusLabel = document.getElementById('p2p-status');
+    if (statusLabel) statusLabel.innerText = "Preparando servidor local de sincronização...";
+
+    try {
+        await garantirPeerJS();
+    } catch (loaderError) {
+        console.error(loaderError);
+        if (statusLabel) statusLabel.innerHTML = `<span style='color: var(--danger);'>❌ Erro: ${loaderError.message}</span>`;
+        return;
+    }
+
+    if (localPeer) {
+        try { localPeer.destroy(); } catch (e) {}
+        localPeer = null;
+    }
+
+    // 🚀 GERA UM CÓDIGO ALEATÓRIO DE 5 DÍGITOS (Ex: 84391)
+    const codigoNumericoCurto = Math.floor(10000 + Math.random() * 90000).toString();
+
+    // Passamos o número gerado diretamente para o construtor do Peer
+    localPeer = new Peer(codigoNumericoCurto);
+
+    localPeer.on('open', (id) => {
+        if (statusLabel) {
+            statusLabel.innerHTML = `
+                <div style="background: rgba(38,139,210,0.1); border: 1px solid var(--accent); padding: 12px; border-radius: 6px; margin-top: 10px;">
+                    <span style="display:block; font-size:11px; color: var(--accent); font-weight:bold; text-transform:uppercase;">Código Deste Dispositivo:</span>
+                    <strong style="font-size: 26px; color: var(--success); font-family: monospace; letter-spacing: 2px;">${id}</strong>
+                    <p style="margin: 6px 0 0 0; font-size:11px; color: var(--text-muted);">Insira estes 5 números no outro dispositivo para enviar o seu histórico.</p>
+                </div>
+            `;
+        }
+    });
+
+    localPeer.on('connection', (conn) => {
+        conn.on('open', async () => {
+            if (statusLabel) statusLabel.innerText = "Par conectado! Empacotando banco de dados...";
+
+            try {
+                const todosOsSolves = await getAllFromStore(REAL_SOLVES_STORE) || [];
+                const todosOsFlashcards = await getAllFromStore('casesState') || [];
+
+                conn.send({
+                    solves: todosOsSolves,
+                    cases: todosOsFlashcards
+                });
+
+                if (statusLabel) statusLabel.innerHTML = "<span style='color: var(--success);'>🚀 Dados transmitidos com sucesso! Sincronizando...</span>";
+            } catch (err) {
+                console.error(err);
+                if (statusLabel) statusLabel.innerText = "Erro ao ler dados locais para envio.";
+            }
+        });
+    });
+
+    localPeer.on('error', (err) => {
+        console.error(err);
+        // Se o código por extrema coincidência já estiver em uso no servidor central, avisa para gerar outro
+        if (err.type === 'unavailable-id') {
+            if (statusLabel) statusLabel.innerText = "Código em uso. Clique novamente para gerar outro.";
+        } else {
+            if (statusLabel) statusLabel.innerText = "Erro ao abrir canal de transmissão.";
+        }
+    });
+}
+
+async function forceClearSystemCacheAndReload() {
+    const statusLabel = document.getElementById('p2p-status');
+    
+    if (statusLabel) {
+        statusLabel.innerText = "A procurar novas atualizações de código...";
+    }
+
+    try {
+        if ('caches' in window && 'serviceWorker' in navigator) {
+            const cacheNames = await caches.keys();
+            await Promise.all(
+                cacheNames.map(cacheName => caches.delete(cacheName))
+            );
+
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            for (const registration of registrations) {
+                await registration.unregister();
+            }
+        }
+
+        if (statusLabel) {
+            statusLabel.innerHTML = "<span style='color: var(--success);'>✅ Sistema atualizado! A recarregar...</span>";
+        }
+
+        setTimeout(() => {
+            window.location.reload(true);
+        }, 1000);
+
+    } catch (err) {
+        console.error("Erro ao atualizar arquivos:", err);
+        alert("Não foi possível atualizar automaticamente.");
+    }
+}
+// ==========================================
+// 3. RENDERIZADORES COMPLEMENTARES
+//    (Devem estar declarados ANTES de initHistoryScreen)
+// ==========================================
+function renderEvolutionChart(solves) {
+    const ctx = document.getElementById('historyEvolutionChart');
+    
+    // ✅ GUARDA DE SEGURANÇA 1: Se o elemento canvas não existir no DOM, aborta imediatamente
+    if (!ctx) return;
+
+    if (evolutionChart) {
+        try {
+            evolutionChart.destroy();
+        } catch (e) {
+            console.warn("Erro ao destruir gráfico antigo:", e);
+        }
+    }
+
+    // Filtra os solves válidos e ordena por data
+    const validSolves = [...solves]
+        .filter(s => s && !s.isDNF)
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    // ✅ GUARDA DE SEGURANÇA 2: Se não houver dados suficientes, limpa o canvas de forma segura e para
+    if (validSolves.length < 2) {
+        const context = ctx.getContext('2d');
+        if (context) {
+            // Garante que o canvas está limpo antes de desenhar o texto
+            context.clearRect(0, 0, ctx.width || 300, ctx.height || 160);
+            context.fillStyle = '#8e8e93';
+            context.font = '11px monospace';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            // Usa valores estáticos seguros caso o bounding box ainda não esteja calculado
+            context.fillText('Gere mais dados para plotar o gráfico.', (ctx.width || 300) / 2, (ctx.height || 160) / 2);
+        }
+        return;
+    }
+
+    const dataDisplay = validSolves.slice(-30);
+    const labels = dataDisplay.map((_, idx) => `#${idx + 1}`);
+    const values = dataDisplay.map(s => s.time);
+
+    // Cria a instância do gráfico apenas se passou pelas validações
+    try {
+        evolutionChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: values,
+                    borderColor: '#268bd2',
+                    borderWidth: 2,
+                    backgroundColor: 'rgba(38, 139, 210, 0.06)',
+                    fill: true,
+                    tension: 0.1,
+                    pointRadius: dataDisplay.length > 50 ? 0 : 2,
+                    pointBackgroundColor: '#268bd2'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { display: false }, ticks: { color: '#657b83', font: { size: 9 } } },
+                    y: { grid: { color: 'rgba(88, 110, 117, 0.1)' }, ticks: { color: '#657b83', font: { size: 9 } } }
+                }
+            }
+        });
+    } catch (chartError) {
+        console.error("Falha ao inicializar Chart.js:", chartError);
+    }
+}
+
+// ==========================================
+// 4. O INICIALIZADOR PRINCIPAL (Exportado)
+//    (Totalmente isolado por categorias fidedignas)
+// ==========================================
 export async function initHistoryScreen() {
     const container = document.getElementById('app-container');
     if (!container) return;
 
-    const rawSolves = await discoverAndFetchSolves();
-    
-    // Filtro rígido para não misturar etapas com o Cubo Inteiro (Todos)
-    const filteredSolves = rawSolves.filter(s => {
+    // 1. Busca TODAS as resoluções brutas do IndexedDB
+    const allSolves = await discoverAndFetchSolves();
+
+    // 2. FILTRAGEM ESTREITA: Separa os dados antes de qualquer cálculo para não misturar recordes
+    // Se currentFilter for 'all', consideramos como a montagem completa do 3x3
+    const filteredSolves = allSolves.filter(s => {
         if (currentFilter === 'all') {
-            return !s.step || s.step === 'all';
+            return !s.step || s.step === 'all'; // Apenas montagens completas 3x3
         }
-        return s.step === currentFilter;
+        return s.step === currentFilter; // Apenas a etapa específica (f2l, oll, pll)
     });
 
-    // Cálculos de Estatísticas Avançadas
     const totalSolves = filteredSolves.length;
     const validSolves = filteredSolves.filter(s => !s.isDNF);
     const pbSingle = validSolves.length > 0 ? Math.min(...validSolves.map(s => s.time)).toFixed(2) + 's' : '-';
-    
-    const totalSoma = validSolves.reduce((acc, s) => acc + s.time, 0);
-    const mediaSessaoGeral = validSolves.length > 0 ? (totalSoma / validSolves.length).toFixed(2) + 's' : '-';
 
-    const curAo5 = calcularAoN(filteredSolves, 5);
-    const curAo12 = calcularAoN(filteredSolves, 12);
-    const bestAo5 = encontrarMelhorAoN(filteredSolves, 5);
-    const bestAo12 = encontrarMelhorAoN(filteredSolves, 12);
+    // 3. Cálculos de Médias baseados ESTRITAMENTE na categoria filtrada
+    const ao5 = calcularAoN(filteredSolves, 5);
+    const ao12 = calcularAoN(filteredSolves, 12);
+    const ao50 = calcularAoN(filteredSolves, 50);
+    const ao100 = calcularAoN(filteredSolves, 100);
 
-    // 📊 Cálculo da Sessão Atual
-    const sessionSolves = getCurrentSessionSolves() || [];
-    const solvesSessaoAtualFiltradas = currentFilter === 'all'
-        ? sessionSolves
-        : sessionSolves.filter(s => s.step === currentFilter);
+    const bAo5 = encontrarMelhorAoN(filteredSolves, 5);
+    const bAo12 = encontrarMelhorAoN(filteredSolves, 12);
 
-    const totalSessaoAtual = solvesSessaoAtualFiltradas.length;
-    const validSessaoAtual = solvesSessaoAtualFiltradas.filter(s => !s.isDNF);
-    const somaSessaoAtual = validSessaoAtual.reduce((acc, s) => acc + s.time, 0);
-    const mediaSessaoAtual = validSessaoAtual.length > 0 ? (somaSessaoAtual / validSessaoAtual.length).toFixed(2) + 's' : '-';
+    // Nome legível da categoria atual para exibição na UI
+    const categoriaNome = currentFilter === 'all' ? '3x3 Completo' : currentFilter.toUpperCase();
 
+    // Renderização completa da estrutura de interface (HTML)
     container.innerHTML = `
-        <div class="history-screen" style="background: var(--bg-card); border: 1px solid #1e293b; border-radius: var(--radius-md); padding: 16px; box-shadow: var(--shadow); box-sizing: border-box; width: 100%; max-width: 100%;">
+        <div class="history-screen" style="padding: 10px; max-width: 600px; margin: 0 auto; box-sizing: border-box; display: flex; flex-direction: column; gap: 16px;">
             
-            <div class="tab-selector" style="display: flex; gap: 6px; background: rgba(2, 6, 23, 0.5); padding: 5px; border-radius: var(--radius-sm, 6px); margin-bottom: 20px; border: 1px solid rgba(88, 110, 117, 0.2);">
-                <button class="${currentFilter === 'all' ? 'active':''}" id="btn-filter-all" style="
-                    flex: 1; padding: 8px 12px; font-size: 13px; font-weight: 600; border: none; border-radius: var(--radius-sm, 4px); cursor: pointer; 
-                    background: ${currentFilter === 'all' ? 'var(--accent)' : 'transparent'}; 
-                    color: ${currentFilter === 'all' ? 'var(--text-bright)' : 'var(--text-main)'};
-                    transition: all 0.2s ease;
-                ">Todos</button>
-                <button class="${currentFilter === 'f2l' ? 'active':''}" id="btn-filter-f2l" style="
-                    flex: 1; padding: 8px 12px; font-size: 13px; font-weight: 600; border: none; border-radius: var(--radius-sm, 4px); cursor: pointer; 
-                    background: ${currentFilter === 'f2l' ? 'var(--accent)' : 'transparent'}; 
-                    color: ${currentFilter === 'f2l' ? 'var(--text-bright)' : 'var(--text-main)'};
-                    transition: all 0.2s ease;
-                ">F2L</button>
-                <button class="${currentFilter === 'oll' ? 'active':''}" id="btn-filter-oll" style="
-                    flex: 1; padding: 8px 12px; font-size: 13px; font-weight: 600; border: none; border-radius: var(--radius-sm, 4px); cursor: pointer; 
-                    background: ${currentFilter === 'oll' ? 'var(--accent)' : 'transparent'}; 
-                    color: ${currentFilter === 'oll' ? 'var(--text-bright)' : 'var(--text-main)'};
-                    transition: all 0.2s ease;
-                ">OLL</button>
-                <button class="${currentFilter === 'pll' ? 'active':''}" id="btn-filter-pll" style="
-                    flex: 1; padding: 8px 12px; font-size: 13px; font-weight: 600; border: none; border-radius: var(--radius-sm, 4px); cursor: pointer; 
-                    background: ${currentFilter === 'pll' ? 'var(--accent)' : 'transparent'}; 
-                    color: ${currentFilter === 'pll' ? 'var(--text-bright)' : 'var(--text-main)'};
-                    transition: all 0.2s ease;
-                ">PLL</button>
+            <div style="background: var(--bg-card); padding: 12px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.05); display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+                <span style="font-size: 13px; font-weight: bold; color: var(--text-bright);">📂 Categoria Ativa:</span>
+                <select id="filter-history-step" style="padding: 6px 12px; font-size: 13px; font-weight: bold; background: #002b36; color: var(--accent); border: 1px solid var(--accent); border-radius: var(--radius-sm); outline: none; cursor:pointer;">
+                    <option value="all" ${currentFilter === 'all' ? 'selected':''}>Cube 3x3 Completo</option>
+                    <option value="f2l" ${currentFilter === 'f2l' ? 'selected':''}>Etapa - F2L</option>
+                    <option value="oll" ${currentFilter === 'oll' ? 'selected':''}>Etapa - OLL</option>
+                    <option value="pll" ${currentFilter === 'pll' ? 'selected':''}>Etapa - PLL</option>
+                </select>
             </div>
 
-            <div class="stats-dashboard-grid" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:20px;">
-                <div class="stat-card" style="background: #020617; border: 1px solid #1e293b; padding: 8px 10px; border-radius: var(--radius-sm);">
-                    <span style="font-size: 9px; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Solves (Total)</span>
-                    <strong style="display: block; font-size: 15px; color: var(--text-main); font-family: monospace; margin-top: 2px;">${totalSolves}</strong>
+            <div class="stats-summary-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+                <div class="stat-box-mini" style="background: var(--bg-card); padding: 12px; border-radius: var(--radius-sm); border: 1px solid rgba(255,255,255,0.03); text-align: center;">
+                    <span style="font-size: 10px; color: var(--text-muted); display:block; text-transform:uppercase; letter-spacing: 0.5px;">Solves (${categoriaNome})</span>
+                    <strong style="font-size: 22px; color: var(--text-bright); font-family: monospace;">${totalSolves}</strong>
                 </div>
-                <div class="stat-card" style="background: #020617; border: 1px solid #1e293b; padding: 8px 10px; border-radius: var(--radius-sm);">
-                    <span style="font-size: 9px; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Melhor Single (PB)</span>
-                    <strong style="display: block; font-size: 15px; color: var(--success); font-family: monospace; margin-top: 2px;">${pbSingle}</strong>
-                </div>
-                <div class="stat-card" style="background: #020617; border: 1px solid #1e293b; padding: 8px 10px; border-radius: var(--radius-sm);">
-                    <span style="font-size: 9px; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Média Geral</span>
-                    <strong style="display: block; font-size: 15px; color: var(--text-main); font-family: monospace; margin-top: 2px;">${mediaSessaoGeral}</strong>
-                </div>
-                <div class="stat-card" style="background: #020617; border: 1px solid var(--accent); padding: 8px 10px; border-radius: var(--radius-sm);">
-                    <span style="font-size: 9px; color: var(--accent); font-weight: 700; text-transform: uppercase;">Sessão Atual</span>
-                    <strong style="display: block; font-size: 14px; color: var(--text-bright); font-family: monospace; margin-top: 2px;">${totalSessaoAtual} s / ${mediaSessaoAtual}</strong>
-                </div>
-                <div class="stat-card" style="background: #020617; border: 1px solid #1e293b; padding: 8px 10px; border-radius: var(--radius-sm);">
-                    <span style="font-size: 9px; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Atual ao5</span>
-                    <strong style="display: block; font-size: 15px; color: var(--text-main); font-family: monospace; margin-top: 2px;">${curAo5}</strong>
-                </div>
-                <div class="stat-card" style="background: #020617; border: 1px solid #1e293b; padding: 8px 10px; border-radius: var(--radius-sm);">
-                    <span style="font-size: 9px; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Melhor ao5</span>
-                    <strong style="display: block; font-size: 15px; color: var(--text-main); font-family: monospace; margin-top: 2px;">${bestAo5}</strong>
-                </div>
-                <div class="stat-card" style="background: #020617; border: 1px solid #1e293b; padding: 8px 10px; border-radius: var(--radius-sm);">
-                    <span style="font-size: 9px; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Atual ao12</span>
-                    <strong style="display: block; font-size: 15px; color: var(--text-main); font-family: monospace; margin-top: 2px;">${curAo12}</strong>
-                </div>
-                <div class="stat-card" style="background: #020617; border: 1px solid #1e293b; padding: 8px 10px; border-radius: var(--radius-sm);">
-                    <span style="font-size: 9px; color: var(--text-muted); font-weight: 700; text-transform: uppercase;">Melhor ao12</span>
-                    <strong style="display: block; font-size: 15px; color: var(--text-main); font-family: monospace; margin-top: 2px;">${bestAo12}</strong>
+                <div class="stat-box-mini" style="background: var(--bg-card); padding: 12px; border-radius: var(--radius-sm); border: 1px solid rgba(255,255,255,0.03); text-align: center;">
+                    <span style="font-size: 10px; color: var(--text-muted); display:block; text-transform:uppercase; letter-spacing: 0.5px;">Melhor Single (PB ${categoriaNome})</span>
+                    <strong style="font-size: 22px; color: var(--success); font-family: monospace;">${pbSingle}</strong>
                 </div>
             </div>
 
-            <div id="weakness-panel-container" style="margin-bottom: 25px; display: none;"></div>
-
-            <div style="background: #020617; border: 1px solid #1e293b; border-radius: var(--radius-sm); padding: 12px; margin-bottom: 25px; box-sizing: border-box;">
-                <h4 style="font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 10px; letter-spacing: 0.5px;">📈 Linha de Evolução Temporal</h4>
-                <div style="position: relative; height: 160px; width: 100%;">
-                    <canvas id="chart-evolution"></canvas>
-                </div>
-            </div>
-
-            <div style="display: flex; flex-direction: column; gap: 24px; width: 100%; max-width: 100%; box-sizing: border-box;">
+            <div class="averages-card" style="background: var(--bg-card); padding: 15px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.02);">
+                <h3 style="margin: 0 0 12px 0; font-size: 14px; color: var(--text-bright); border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px; display: flex; justify-content: space-between;">
+                    <span>📊 Estatísticas de: <strong>${categoriaNome}</strong></span>
+                </h3>
                 
-                <div style="width: 100%; max-width: 100%; box-sizing: border-box;">
-                    <h3 style="font-size: 13px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
-                        🏆 Seus 12 Melhores Tempos
-                    </h3>
-                    <div id="top-12-singles-target" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; width: 100%; box-sizing: border-box;"></div>
-                </div>
-
-                <div style="width: 100%; max-width: 100%; box-sizing: border-box;">
-                    <h3 style="font-size: 13px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;">
-                        Histórico Detalhado
-                    </h3>
-                    <div id="history-list-target" style="height: 400px; overflow-y: auto; padding-right: 4px; display: flex; flex-direction: column; gap: 8px; width: 100%; box-sizing: border-box;"></div>
-                </div>
-            </div>
-
-            <div style="margin-top: 30px; border-top: 1px solid #1e293b; padding-top: 20px; box-sizing: border-box; width: 100%;">
-                <button id="btn-forcar-update" style="
-                    background: rgba(38, 139, 210, 0.1); 
-                    border: 1px solid rgba(38, 139, 210, 0.3); 
-                    color: var(--accent); 
-                    font-size: 11px; 
-                    font-weight: 700; 
-                    padding: 8px 12px; 
-                    border-radius: var(--radius-sm, 4px); 
-                    cursor: pointer; 
-                    transition: all 0.2s ease; 
-                    width: 100%; 
-                    margin-bottom: 10px;
-                    text-align: center;
-                ">
-                    🔄 Forçar Atualização do Código (Preservar Histórico)
-                </button>
-                <button id="btn-toggle-backup-zone" style="background: transparent; border: 1px solid #1e293b; color: var(--text-muted); font-size: 12px; font-weight:600; padding: 8px 12px; border-radius: var(--radius-sm); cursor: pointer; transition: var(--transition); width: 100%; text-align: center;">⚙️ Gerenciar Dados (Backup / Reset)</button>
-                
-                <div id="import-export-zone" class="hidden" style="margin-top: 15px; background: rgba(2, 6, 23, 0.4); border: 1px solid #1e293b; padding: 15px; border-radius: var(--radius-sm); box-sizing: border-box; width: 100%;">
-                    <div style="display: flex; gap: 8px; margin-bottom: 12px;">
-                        <button id="btn-export-json" class="btn-primary" style="font-size: 11px; padding: 6px 12px; flex: 1; background: var(--accent); border:none; color:#fff; border-radius:4px; cursor:pointer;">📥 Exportar JSON</button>
-                        <label style="background: #1e293b; color: var(--text-main); font-size: 11px; font-weight: 700; padding: 6px 12px; border-radius: var(--radius-sm); cursor: pointer; display: flex; align-items: center; justify-content: center; flex: 1;">
-                            📤 Enviar Arquivo
-                            <input type="file" id="file-import-selector" accept=".json" style="display: none;">
-                        </label>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+                    <div style="background: rgba(0,0,0,0.15); padding: 10px; border-radius: 6px;">
+                        <h4 style="margin: 0 0 8px 0; font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Média Atual</h4>
+                        <div style="display: flex; flex-direction: column; gap: 6px; font-family: monospace; font-size: 13px;">
+                            <div>ao5: <strong style="color: var(--text-bright); float: right;">${ao5}</strong></div>
+                            <div>ao12: <strong style="color: var(--text-bright); float: right;">${ao12}</strong></div>
+                            <div>ao50: <strong style="color: var(--text-bright); float: right;">${ao50}</strong></div>
+                            <div>ao100: <strong style="color: var(--text-bright); float: right;">${ao100}</strong></div>
+                        </div>
                     </div>
-                    <textarea id="txt-import-data" placeholder="Conteúdo JSON do backup..." style="width: 100%; height: 70px; background: #020617; border: 1px solid #1e293b; color: var(--accent); font-family: monospace; font-size: 11px; padding: 8px; border-radius: 5px; resize: none; margin-bottom: 10px; box-sizing: border-box;"></textarea>
-                    <button id="btn-confirm-import" style="background: rgba(16, 185, 129, 0.2); border: 1px solid rgba(16, 185, 129, 0.4); color: #10b981; font-size: 11px; font-weight: 700; padding: 8px 12px; border-radius: var(--radius-sm); cursor: pointer; width: 100%;">Confirmar e Mesclar Dados</button>
-                </div>
-
-                <div class="danger-zone-container" style="margin-top: 20px; padding: 15px; border-radius: var(--radius-sm); background: rgba(220, 50, 47, 0.03); border: 1px dashed rgba(220, 50, 47, 0.2); text-align: center;">
-                    <p class="danger-text" style="font-size:11px; color:var(--text-muted); margin-bottom:10px;"><strong>Zona de Perigo:</strong> Esta ação apagará permanentemente todo o seu histórico e progresso salvos localmente.</p>
-                    <button id="btn-danger-clear-db" class="btn-reset-danger" style="background: transparent; color: var(--danger); border: 1px solid var(--danger); padding: 8px 16px; font-size: 12px; font-weight: 600; border-radius: var(--radius-sm); cursor: pointer; transition: all 0.2s ease;">
-                        ⚠️ Limpar Banco de Dados
-                    </button>
+                    
+                    <div style="background: rgba(40,167,69,0.03); padding: 10px; border-radius: 6px; border: 1px solid rgba(40,167,69,0.1);">
+                        <h4 style="margin: 0 0 8px 0; font-size: 11px; color: var(--success); text-transform: uppercase;">Melhor Histórico (PB)</h4>
+                        <div style="display: flex; flex-direction: column; gap: 6px; font-family: monospace; font-size: 13px;">
+                            <div>Melhor ao5: <strong style="color: var(--success); float: right;">${bAo5}</strong></div>
+                            <div>Melhor ao12: <strong style="color: var(--success); float: right;">${bAo12}</strong></div>
+                            <div style="color: var(--text-muted); font-size: 10px; margin-top: 6px; text-align: center; grid-column: span 2;">Focado em ${categoriaNome}</div>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <div style="margin-top: 15px; background: rgba(2, 6, 23, 0.6); border: 1px solid #1e293b; padding: 15px; border-radius: var(--radius-sm); box-sizing: border-box; width: 100%;">
-            <h4 style="font-size: 12px; color: var(--accent); margin-top: 0; margin-bottom: 5px; text-transform: uppercase;">⚡ Sincronização Direta P2P</h4>
-            <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px;">Transfira dados instantaneamente entre PC e Celular sem cabos ou arquivos.</p>
-            
-            <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
-                <button id="btn-p2p-gerar" style="background: #268bd2; border:none; color:#fff; font-size:11px; padding:8px 12px; border-radius:4px; font-weight:600; cursor:pointer; flex: 1;">
-                    🖥️ Enviar deste PC
-                </button>
+            <div class="averages-card" style="background: var(--bg-card); padding: 15px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.02);">
+                <h3 style="margin: 0 0 10px 0; font-size: 14px; color: var(--text-bright);">🥇 Top 12 Singles — ${categoriaNome}</h3>
+                <div id="top-12-singles-target" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;"></div>
+            </div>
+
+            <div id="weakness-panel-container" style="display: none;"></div>
+
+            <div class="chart-card" style="background: var(--bg-card); padding: 15px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.02);">
+                <h3 style="margin: 0 0 12px 0; font-size: 14px; color: var(--text-bright);">📈 Gráfico de Evolução (${categoriaNome})</h3>
+                <div style="position: relative; width: 100%; height: 180px;">
+                    <canvas id="historyEvolutionChart"></canvas>
+                </div>
+            </div>
+
+            <div class="history-list-section">
+                <h3 style="font-size: 14px; color: var(--text-bright); margin: 0 0 10px 0;">📜 Histórico Recente — ${categoriaNome}</h3>
+                <div id="history-list-target" style="display: flex; flex-direction: column; gap: 6px;"></div>
+            </div>
+
+            <div class="averages-card" style="background: var(--bg-card); padding: 15px; border-radius: var(--radius-md); border: 1px solid rgba(38,139,210,0.15);">
+                <h3 style="margin: 0 0 6px 0; font-size: 14px; color: var(--accent);">🌐 Sincronização Cross-Device (P2P Direto)</h3>
+                <p style="font-size:11px; color: var(--text-muted); margin: 0 0 12px 0; line-height: 1.4;">Transfira ou mescle os seus treinos e estados de flashcards entre telemóveis e computadores sem servidores intermédios.</p>
                 
-                <div style="display: flex; flex: 1; gap: 4px; min-width: 160px;">
-                    <input type="number" id="input-p2p-code" placeholder="Código de 4 dígitos" style="background:#020617; border: 1px solid #1e293b; color:#fff; font-size:11px; padding:6px; border-radius:4px; width:70%; text-align:center; font-family:monospace;">
-                    <button id="btn-p2p-conectar" style="background: rgba(16, 185, 129, 0.2); border:1px solid rgba(16, 185, 129, 0.4); color:#10b981; font-size:11px; padding:6px; border-radius:4px; font-weight:600; cursor:pointer; width:30%;">
-                        📱 OK
+                <div style="display: flex; flex-direction: column; gap: 10px; width:100%;">
+                    <button id="btn-p2p-gerar" class="btn-primary" style="background: rgba(38,139,210,0.12); border: 1px solid var(--accent); color: var(--text-bright); font-size:12px; padding: 10px;">
+                        🔗 Gerar Código de Transmissão Neste Dispositivo
                     </button>
+                    
+                    <div style="display: flex; gap: 6px; margin-top: 4px; width: 100%; box-sizing: border-box;">
+                        <input type="text" 
+                               id="p2p-code-input" 
+                               inputmode="numeric" 
+                               pattern="[0-9]*" 
+                               maxlength="5" 
+                               placeholder="Digite os 5 números do Dispositivo 1..." 
+                               style="flex: 1; padding: 10px; font-size:12px; background: #002b36; border: 1px solid var(--border-color); color: var(--text-bright); border-radius: var(--radius-sm); outline:none; min-width: 0;">
+                        
+                        <button id="btn-p2p-conectar" class="btn-primary" style="font-size:12px; padding: 0 14px; background: var(--success); white-space: nowrap;">
+                            Sincronizar 📥
+                        </button>
+                    </div>
                 </div>
+                <div id="p2p-status" style="font-size: 11px; color: var(--text-muted); font-family: monospace; text-align: center; margin-top: 10px; min-height: 14px;"></div>
             </div>
 
-            <div id="p2p-container-display" style="text-align: center; margin-top: 10px;">
-                <span id="p2p-status" style="font-size: 11px; color: var(--text-muted); font-family: monospace;">Sistema pronto para pareamento.</span>
-                <div id="p2p-code-display"></div>
+            <div class="danger-zone-container" style="margin-top: 10px;">
+                <p class="danger-text" style="font-size: 11px; color: var(--danger); margin-bottom: 8px;">⚠️ Cuidado: Esta ação irá apagar definitivamente todas as suas resoluções, recordes e progresso de flashcards salvos localmente.</p>
+                <button id="btn-wipe-database" class="btn-primary" style="background: var(--danger); padding: 8px 16px; font-size: 12px; font-weight: bold; border-radius: var(--radius-sm); border: none; color: #fff; cursor: pointer;">
+                    Apagar Todos os Dados do Sistema
+                </button>
             </div>
+            
+            <div style="text-align: center; margin-top: 10px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.03);">
+                <button id="btn-force-update-app" style="background: transparent; border: 1px dashed var(--border-color); color: var(--text-muted); padding: 6px 12px; font-size: 11px; border-radius: 4px; cursor: pointer;">
+                    🔄 Procurar Atualizações de Código (Limpar Cache)
+                </button>
+            </div>
+
         </div>
     `;
 
-    // Vincular cliques dos botões de etapas
-    ['all', 'f2l', 'oll', 'pll'].forEach(f => {
-        const btn = document.getElementById(`btn-filter-${f}`);
-        if (btn) {
-            btn.onclick = () => {
-                currentFilter = f;
-                initHistoryScreen();
-            };
+    // =========================================================================
+    // 🚀 ASSOCIAÇÃO DE EVENTOS
+    // =========================================================================
+    document.getElementById('btn-p2p-gerar').addEventListener('click', async () => {
+        await gerarCodigoParaTransmissaoP2P();
+    });
+
+    document.getElementById('btn-p2p-conectar').addEventListener('click', async () => {
+        const inputCodigo = document.getElementById('p2p-code-input');
+        if (inputCodigo && inputCodigo.value.trim() !== "") {
+            await conectarComoReceptorP2P(inputCodigo.value.trim());
+        } else {
+            const statusLabel = document.getElementById('p2p-status');
+            if (statusLabel) {
+                statusLabel.innerHTML = "<span style='color:var(--warning);'>Por favor, digite um código válido.</span>";
+            }
         }
     });
 
-    const btnToggle = document.getElementById('btn-toggle-backup-zone');
-    if (btnToggle) {
-        btnToggle.onclick = () => {
-            document.getElementById('import-export-zone').classList.toggle('hidden');
-        };
-    }
+    document.getElementById('btn-force-update-app').addEventListener('click', forceClearSystemCacheAndReload);
 
-    // Vinculação de eventos do backup corrigidos
-    document.getElementById('btn-export-json').onclick = exportData;
-    document.getElementById('file-import-selector').onchange = handleFileSelect;
-    document.getElementById('btn-confirm-import').onclick = importData;
-
-    document.getElementById('btn-danger-clear-db').onclick = async () => {
-        if (confirm("⚠️ ATENÇÃO MÁXIMA!! Isso apagará TODOS os seus tempos e algoritmos do navegador!\n\nTem certeza absoluta que deseja prosseguir?")) {
-            // ✅ CORREÇÃO: Mata qualquer conexão WebRTC aberta antes de resetar e recarregar a página
-            if (typeof encerrarConexaoP2P === 'function') {
-                encerrarConexaoP2P();
-            }
-            
+    document.getElementById('btn-wipe-database').addEventListener('click', async () => {
+        const confirmar = confirm("Tem a certeza absoluta de que deseja limpar a sua base de dados? Esta ação não pode ser desfeita!");
+        if (confirmar) {
             await clearAllDatabase();
-            alert("O aplicativo foi redefinido com sucesso.");
+            alert("Base de dados limpa com sucesso.");
             window.location.reload();
         }
-    };
+    });
 
-    renderTop12Singles(filteredSolves, rawSolves); 
-    renderHistoryList(filteredSolves, rawSolves);
+    // Event listener do filtro corrigido para disparar a atualização completa com isolamento
+    document.getElementById('filter-history-step').addEventListener('change', (e) => {
+        currentFilter = e.target.value;
+        initHistoryScreen(); 
+    });
+
+    // 4. ENVIO DOS DADOS FILTRADOS PARA OS COMPONENTES VISUAIS
+    renderTop12Singles(filteredSolves, allSolves);
+    renderHistoryList(filteredSolves, allSolves);
+    calculateAndRenderWeaknesses(allSolves);
     renderEvolutionChart(filteredSolves);
-    calculateAndRenderWeaknesses(rawSolves);
-    document.getElementById('btn-p2p-gerar').onclick = iniciarEmissorP2P;
-    document.getElementById('btn-p2p-conectar').onclick = conectarComoReceptorP2P;
-    const btnUpdate = document.getElementById('btn-forcar-update');
-        if (btnUpdate) {
-            btnUpdate.onclick = forcarAtualizacaoSistema;
-        }
 }
 
 // ==========================================================================
@@ -456,77 +689,6 @@ function calculateAndRenderWeaknesses(allSolves) {
         </div>
     `;
     container.style.display = 'block';
-}
-
-function renderEvolutionChart(solves) {
-    const ctx = document.getElementById('chart-evolution');
-    
-    // ✅ GUARDA DE SEGURANÇA 1: Se o elemento canvas não existir no DOM, aborta imediatamente
-    if (!ctx) return;
-
-    if (evolutionChart) {
-        try {
-            evolutionChart.destroy();
-        } catch (e) {
-            console.warn("Erro ao destruir gráfico antigo:", e);
-        }
-    }
-
-    // Filtra os solves válidos e ordena por data
-    const validSolves = [...solves]
-        .filter(s => s && !s.isDNF)
-        .sort((a, b) => new Date(a.date) - new Date(b.date));
-
-    // ✅ GUARDA DE SEGURANÇA 2: Se não houver dados suficientes, limpa o canvas de forma segura e para
-    if (validSolves.length < 2) {
-        const context = ctx.getContext('2d');
-        if (context) {
-            // Garante que o canvas está limpo antes de desenhar o texto
-            context.clearRect(0, 0, ctx.width || 300, ctx.height || 160);
-            context.fillStyle = '#8e8e93';
-            context.font = '11px monospace';
-            context.textAlign = 'center';
-            context.textBaseline = 'middle';
-            // Usa valores estáticos seguros caso o bounding box ainda não esteja calculado
-            context.fillText('Gere mais dados para plotar o gráfico.', (ctx.width || 300) / 2, (ctx.height || 160) / 2);
-        }
-        return;
-    }
-
-    const dataDisplay = validSolves.slice(-30);
-    const labels = dataDisplay.map((_, idx) => `#${idx + 1}`);
-    const values = dataDisplay.map(s => s.time);
-
-    // Cria a instância do gráfico apenas se passou pelas validações
-    try {
-        evolutionChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [{
-                    data: values,
-                    borderColor: '#268bd2',
-                    borderWidth: 2,
-                    backgroundColor: 'rgba(38, 139, 210, 0.06)',
-                    fill: true,
-                    tension: 0.1,
-                    pointRadius: dataDisplay.length > 50 ? 0 : 2,
-                    pointBackgroundColor: '#268bd2'
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: { legend: { display: false } },
-                scales: {
-                    x: { grid: { display: false }, ticks: { color: '#657b83', font: { size: 9 } } },
-                    y: { grid: { color: 'rgba(88, 110, 117, 0.1)' }, ticks: { color: '#657b83', font: { size: 9 } } }
-                }
-            }
-        });
-    } catch (chartError) {
-        console.error("Falha ao inicializar Chart.js:", chartError);
-    }
 }
 
 function renderTop12Singles(filteredSolves, rawSolves) {
@@ -722,90 +884,6 @@ async function iniciarEmissorP2P() {
 /**
  * 📱 Conecta ao PC como Receptor (Consumidor do Código)
  */
-function conectarComoReceptorP2P(codigoAlvo) {
-    const statusLabel = document.getElementById('p2p-status');
-    const inputCodigo = document.getElementById('p2p-code-input');
-
-    if (statusLabel) statusLabel.innerText = "Localizando par na rede...";
-
-    if (localPeer) {
-        localPeer.destroy();
-        localPeer = null;
-    }
-
-    localPeer = new Peer();
-
-    localPeer.on('open', () => {
-        const conn = localPeer.connect(codigoAlvo);
-
-        conn.on('open', () => {
-            if (statusLabel) statusLabel.innerText = "Conectado! Aguardando dados...";
-        });
-
-        conn.on('data', async (data) => {
-            if (statusLabel) statusLabel.innerText = "Mesclando histórico e progresso de flashcards...";
-            
-            try {
-                const db = await import('../db.js');
-                
-                // 1. Sincroniza o histórico de resoluções (times)
-                if (data.solves && Array.isArray(data.solves)) {
-                    for (const solve of data.solves) {
-                        await db.saveToStore(REAL_SOLVES_STORE, solve);
-                    }
-                }
-                
-                // 2. Sincroniza o estado de aprendizado dos Flashcards (casesState)
-                if (data.cases && Array.isArray(data.cases)) {
-                    for (const caseState of data.cases) {
-                        await db.saveToStore('casesState', caseState);
-                    }
-                }
-
-                if (statusLabel) statusLabel.innerHTML = "<span style='color: var(--success);'>✅ Dispositivo 100% Sincronizado!</span>";
-                if (inputCodigo) inputCodigo.value = "";
-                
-            } catch (error) {
-                console.error(error);
-                if (statusLabel) statusLabel.innerText = "Falha ao gravar dados recebidos.";
-            } finally {
-                // Fechar conexões P2P locais de forma limpa
-                setTimeout(() => {
-                    if (localPeer) {
-                        localPeer.destroy();
-                        localPeer = null;
-                    }
-                    if (statusLabel) statusLabel.innerText = "Sincronização concluída.";
-
-                    // ==========================================
-                    // 🚀 ALTERAÇÃO Nº 3: RE-RENDERIZAÇÃO SUAVE
-                    // ==========================================
-                    // 1. Força o dashboard (cabeçalho) a recalcular o novo streak e progresso mesclado
-                    import('./dashboard.js').then(dash => {
-                        if (dash && typeof dash.renderDashboard === 'function') {
-                            dash.renderDashboard();
-                        }
-                    });
-                    
-                    // 2. Força a tela de histórico atual a reconstruir as médias e o gráfico Chart.js na hora
-                    initHistoryScreen();
-                    // ==========================================
-
-                }, 3500);
-            }
-        });
-
-        conn.on('error', (err) => {
-            console.error(err);
-            if (statusLabel) statusLabel.innerText = "Erro na conexão com o par.";
-        });
-    });
-
-    localPeer.on('error', (err) => {
-        console.error(err);
-        if (statusLabel) statusLabel.innerText = "Não foi possível conectar. Verifique o código.";
-    });
-}
 
 /**
  * 🧹 Desconecta portas e limpa listeners com atualização segura da interface
