@@ -310,6 +310,7 @@ async function saveTime(timeValue, isDnfForced = false) {
     
     updateLiveAverages();
     import('./dashboard.js').then(dash => { if (dash && dash.renderDashboard) dash.renderDashboard(); });
+    agendarLembreteDeStreak();
 }
 
 async function applyQuickPlusTwo() {

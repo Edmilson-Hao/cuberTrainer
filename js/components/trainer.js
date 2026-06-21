@@ -1,279 +1,513 @@
 import { cuberData, getImagePath } from '../data.js';
 import { getAllFromStore, saveToStore } from '../db.js';
+// Importação correta na mesma pasta de componentes
+import { gerarScrambleInverso, decomporAlgoritmo } from './scrambler.js';
 
-let currentSessionQueue = [];
-let queueIndex = 0;
+// Máquina de Estados e Variáveis de Controle Global do Treinador
+let modoTreinoAtual = 'metronome'; // 'metronome' ou 'antipanic'
+let filaDeCasosAtiva = [];
+let indexCasoAtual = 0;
 
-let sessionStats = {
-    totalCorrect: 0,
-    totalWrong: 0,
-    startTime: null,
-    erradosNaSessao: new Set()
-};
+// Estado do Metrônomo (Otimizado com Auto-Restart e Bipes Exclusivos)
+let tpsAlvo = 4.0;
+let audioCtx = null;
+let metronomeIntervalId = null;
+let timeoutReiniciarId = null; // Controla a folga de 0.5s antes de reiniciar automaticamente
+let movimentosDecompostos = [];
+let indexMovimentoMetronome = 0;
+let cronometroMetronomeStart = 0;
+let deVoltaNoLoop = false; // Flag para rastrear e disparar o som diferenciado de reinício
 
-// Mapeamento nativo dos Subgrupos oficiais para filtragem inteligente
-const SUBGRUPOS = {
-    oll: [
-        { id: 'all', name: 'Todos os Casos OLL (57)' },
-        { id: 'cruz', name: 'OLLs de Cruz Orientada (Caso 21 ao 27)' },
-        { id: 'ponto', name: 'OLLs de Ponto Puro (Caso 1 ao 4, 17-19)' },
-        { id: 'linha', name: 'OLLs de Linha/Barra' }
-    ],
-    pll: [
-        { id: 'all', name: 'Todos os Casos PLL (21)' },
-        { id: 'meios', name: 'Apenas Meios (Ua, Ub, Z, H)' },
-        { id: 'cantos', name: 'Apenas Cantos (Aa, Ab, E)' },
-        { id: 'gperms', name: 'Permutações G (Ga, Gb, Gc, Gd)' }
-    ]
-};
+// Estado do Modo Antipânico (Engine Stackmat)
+let tempoStartAntipanic = 0;
+let segurandoEspaco = false;
+let temporizadorPronto = false;
+let timeoutSegurarId = null;
+let cronometroRodandoAntipanic = false;
+let intervaloCronometroId = null;
 
+/**
+ * Inicializador principal da tela de Treino
+ */
 export async function initTrainerScreen() {
     const container = document.getElementById('app-container');
+    if (!container) return;
 
+    // Renderiza o esqueleto estrutural perfeitamente responsivo, integrado ao CSS global
     container.innerHTML = `
-        <div class="trainer-setup" style="padding: 16px; background: var(--bg-card); border-radius: var(--radius-md); border: 1px solid #1e293b;">
-            <h3>🗂️ Treino Inteligente e Segmentado</h3>
-            <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 20px;">
-                Selecione as etapas ou filtre por <strong>subgrupos específicos</strong> para focar nos seus pontos fracos.
-            </p>
+        <div class="trainer-screen" style="width: 100%; max-width: 600px; margin: 0 auto; padding: 10px; box-sizing: border-box;">
             
-            <div class="form-group" style="margin-bottom: 15px;">
-                <label style="font-weight: bold; font-size: 13px; color: var(--accent); display:block; margin-bottom: 8px;">Etapas Ativas</label>
-                <div class="checkboxes-group" style="display:flex; flex-direction:column; gap: 8px;">
-                    <label><input type="checkbox" id="chk-f2l" checked> F2L (Casos 1 a 41)</label>
-                    <label><input type="checkbox" id="chk-oll"> OLL (Orientação do Topo)</label>
-                    <label><input type="checkbox" id="chk-pll"> PLL (Permutação do Topo)</label>
-                </div>
+            <div class="tab-selector" style="display: flex; gap: 8px; background: rgba(2, 6, 23, 0.5); padding: 6px; border-radius: var(--radius-md, 8px); margin-bottom: 20px; border: 1px solid rgba(88, 110, 117, 0.2); width: 100%; box-sizing: border-box;">
+                <button id="btn-modo-metronome" class="${modoTreinoAtual === 'metronome' ? 'active' : ''}" style="flex: 1; padding: 12px 8px; font-size: 13px; font-weight: bold; border: none; border-radius: var(--radius-sm, 6px); cursor: pointer; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">
+                    ⏱️ Metrônomo
+                </button>
+                <button id="btn-modo-antipanic" class="${modoTreinoAtual === 'antipanic' ? 'active' : ''}" style="flex: 1; padding: 12px 8px; font-size: 13px; font-weight: bold; border: none; border-radius: var(--radius-sm, 6px); cursor: pointer; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">
+                    🔥 Antipânico
+                </button>
             </div>
 
-            <div id="subgrupo-oll-box" style="margin-bottom: 15px; display: none;">
-                <label style="font-size: 12px; color: var(--text-muted); display:block; margin-bottom: 4px;">Filtro de Subgrupo OLL:</label>
-                <select id="sel-subgrupo-oll" style="width:100%; background:#020617; border:1px solid #1e293b; color:#fff; padding:8px; border-radius:6px; font-size:13px;"></select>
-            </div>
-
-            <div id="subgrupo-pll-box" style="margin-bottom: 20px; display: none;">
-                <label style="font-size: 12px; color: var(--text-muted); display:block; margin-bottom: 4px;">Filtro de Subgrupo PLL:</label>
-                <select id="sel-subgrupo-pll" style="width:100%; background:#020617; border:1px solid #1e293b; color:#fff; padding:8px; border-radius:6px; font-size:13px;"></select>
-            </div>
-
-            <button id="btn-start-session" class="btn-primary" style="width:100%; padding:12px; font-weight:bold; border-radius:var(--radius-sm);">🚀 Iniciar Sessão de Foco</button>
+            <div id="trainer-workspace" style="width: 100%; box-sizing: border-box;"></div>
         </div>
     `;
 
-    // Alimentando os selects de subgrupos nativamente
-    const selOll = document.getElementById('sel-subgrupo-oll');
-    const selPll = document.getElementById('sel-subgrupo-pll');
-    SUBGRUPOS.oll.forEach(g => selOll.innerHTML += `<option value="${g.id}">${g.name}</option>`);
-    SUBGRUPOS.pll.forEach(g => selPll.innerHTML += `<option value="${g.id}">${g.name}</option>`);
-
-    // Mostrar/ocultar os subgrupos dependendo de quais etapas principais estão marcadas
-    const chkOll = document.getElementById('chk-oll');
-    const chkPll = document.getElementById('chk-pll');
-    
-    chkOll.onchange = () => document.getElementById('subgrupo-oll-box').style.display = chkOll.checked ? 'block' : 'none';
-    chkPll.onchange = () => document.getElementById('subgrupo-pll-box').style.display = chkPll.checked ? 'block' : 'none';
-
-    document.getElementById('btn-start-session').onclick = generateTrainerQueue;
-}
-
-// Algoritmo de filtragem avançada por subgrupo
-function filtrarCasosEspecificos(etapa, subgrupoId) {
-    const todosOsCasos = cuberData[etapa] || [];
-    if (!subgrupoId || subgrupoId === 'all') return todosOsCasos;
-
-    if (etapa === 'oll') {
-        if (subgrupoId === 'cruz') {
-            // Casos oficiais de cruz orientada
-            return todosOsCasos.filter(c => c.id >= 21 && c.id <= 27);
-        }
-        if (subgrupoId === 'ponto') {
-            return todosOsCasos.filter(c => [1, 2, 3, 4, 17, 18, 19].includes(c.id));
-        }
-        if (subgrupoId === 'linha') {
-            return todosOsCasos.filter(c => [13, 14, 15, 16, 51, 52, 55, 56].includes(c.id));
-        }
-    }
-
-    if (etapa === 'pll') {
-        if (subgrupoId === 'meios') {
-            return todosOsCasos.filter(c => ['Ua', 'Ub', 'Z', 'H'].some(name => c.name.includes(name)));
-        }
-        if (subgrupoId === 'cantos') {
-            return todosOsCasos.filter(c => ['Aa', 'Ab', 'E', 'V'].some(name => c.name.includes(name)));
-        }
-        if (subgrupoId === 'gperms') {
-            return todosOsCasos.filter(c => c.name.toLowerCase().includes('g-'));
-        }
-    }
-
-    return todosOsCasos;
-}
-
-async function generateTrainerQueue() {
-    const useF2l = document.getElementById('chk-f2l').checked;
-    const useOll = document.getElementById('chk-oll').checked;
-    const usePll = document.getElementById('chk-pll').checked;
-
-    let queue = [];
-
-    if (useF2l) {
-        cuberData.f2l.forEach(c => queue.push({ ...c, step: 'f2l', uid: `f2l-${c.id}` }));
-    }
-    if (useOll) {
-        const subOll = document.getElementById('sel-subgrupo-oll').value;
-        const filtrados = filtrarCasosEspecificos('oll', subOll);
-        filtrados.forEach(c => queue.push({ ...c, step: 'oll', uid: `oll-${c.id}` }));
-    }
-    if (usePll) {
-        const subPll = document.getElementById('sel-subgrupo-pll').value;
-        const filtrados = filtrarCasosEspecificos('pll', subPll);
-        filtrados.forEach(c => queue.push({ ...c, step: 'pll', uid: `pll-${c.id}` }));
-    }
-
-    if (queue.length === 0) {
-        alert("Selecione ao menos uma etapa para treinar!");
-        return;
-    }
-
-    // Embaralha o deck de flashcards
-    currentSessionQueue = queue.sort(() => Math.random() - 0.5);
-    queueIndex = 0;
-
-    sessionStats = {
-        totalCorrect: 0,
-        totalWrong: 0,
-        startTime: Date.now(),
-        erradosNaSessao: new Set()
-    };
-
-    renderTrainerCard();
-}
-
-function renderTrainerCard() {
-    const container = document.getElementById('app-container');
-
-    if (queueIndex >= currentSessionQueue.length) {
-        renderTrainerSummary();
-        return;
-    }
-
-    const item = currentSessionQueue[queueIndex];
-
-    container.innerHTML = `
-        <div class="trainer-card-screen" style="text-align: center; background: var(--bg-card); padding: 20px; border-radius: var(--radius-md); border: 1px solid #1e293b;">
-            <div style="display:flex; justify-content: space-between; font-size:12px; color: var(--text-muted); margin-bottom: 15px;">
-                <span style="text-transform: uppercase; font-weight:700; color:var(--accent);">${item.step}</span>
-                <span>Progresso: <strong>${queueIndex + 1}/${currentSessionQueue.length}</strong></span>
-            </div>
-
-            <div class="flashcard-box" style="background:#020617; padding: 20px; border-radius: var(--radius-sm); border:1px solid #1e293b; margin-bottom: 20px;">
-                <img src="${getImagePath(item.step, item.id)}" alt="Caso do cubo" style="width: 120px; height: 120px; margin: 0 auto 15px auto; display: block; filter: drop-shadow(0 0 8px rgba(0,242,254,0.2));">
-                <h2 id="case-name-blur" style="filter: blur(6px); transition: filter 0.2s; font-size: 20px; margin-bottom: 10px;">${item.name}</h2>
-                <div id="alg-container-hidden" style="visibility: hidden; font-family: monospace; font-size: 14px; color: var(--accent); background: rgba(0,242,254,0.05); padding: 8px; border-radius:4px;">
-                    ${item.algs && item.algs[0] ? item.algs[0] : 'Sem algoritmo cadastrado'}
-                </div>
-            </div>
-
-            <div id="trainer-action-area" style="display:flex; flex-direction:column; gap: 10px;">
-                <button id="btn-reveal-card" class="btn-primary" style="padding:12px; font-weight:bold;">👀 Revelar Resposta</button>
-            </div>
-        </div>
-    `;
-
-    document.getElementById('btn-reveal-card').onclick = () => {
-        document.getElementById('case-name-blur').style.filter = 'none';
-        document.getElementById('alg-container-hidden').style.visibility = 'visible';
-
-        document.getElementById('trainer-action-area').innerHTML = `
-            <div style="display:flex; gap:10px; width:100%;">
-                <button id="btn-solve-wrong" style="flex:1; background: var(--danger-bg); border: 1px solid rgba(255,23,68,0.3); color: var(--danger); padding:12px; border-radius:6px; font-weight:bold; cursor:pointer;">❌ Errei / Travei</button>
-                <button id="btn-solve-right" style="flex:1; background: var(--success-bg); border: 1px solid rgba(0,230,118,0.3); color: var(--success); padding:12px; border-radius:6px; font-weight:bold; cursor:pointer;">✅ Acertei</button>
-            </div>
-        `;
-
-        document.getElementById('btn-solve-right').onclick = () => processAnswer(true);
-        document.getElementById('btn-solve-wrong').onclick = processAnswer;
-    };
-}
-
-async function processAnswer(isCorrect = false) {
-    const item = currentSessionQueue[queueIndex];
-    const states = await getAllFromStore('casesState') || [];
-    let state = states.find(s => s.uid === item.uid) || { uid: item.uid, learned: false, successCount: 0, failCount: 0 };
-
-    if (isCorrect) {
-        state.successCount++;
-        if (!sessionStats.erradosNaSessao.has(item.uid)) {
-            sessionStats.totalCorrect++;
-        }
-        queueIndex++;
-    } else {
-        state.failCount++;
-        sessionStats.totalWrong++;
-        sessionStats.erradosNaSessao.add(item.uid);
-
-        // Se errou, move o card 3 posições para trás ou para o fim da fila para forçar repetição imediata
-        const cardErrado = currentSessionQueue.splice(queueIndex, 1)[0];
-        const novaPosicao = Math.min(queueIndex + 3, currentSessionQueue.length);
-        currentSessionQueue.splice(novaPosicao, 0, cardErrado);
-    }
-
-    await saveToStore('casesState', state);
-    renderTrainerCard();
-}
-
-function renderTrainerSummary() {
-    const container = document.getElementById('app-container');
-    const totalTime = Date.now() - sessionStats.startTime;
-    const elapsedMinutes = Math.floor(totalTime / 60000);
-    const elapsedSeconds = Math.floor((totalTime % 60000) / 1000);
-
-    const totalRespondidos = sessionStats.totalCorrect + sessionStats.erradosNaSessao.size;
-    const precisao = totalRespondidos > 0 ? ((sessionStats.totalCorrect / totalRespondidos) * 100).toFixed(0) : 100;
-
-    // ✅ BÔNUS: Cria um registro simbólico no histórico para computar a sessão de flashcards no seu Streak!
-    saveToStore('times', {
-        time: 0.00,
-        scramble: `Treino de Flashcards: ${totalRespondidos} casos revisados`,
-        date: new Date().toISOString(),
-        step: 'all', 
-        isDNF: false,
-        hasPlusTwo: false
-    }).then(() => {
-        // Força o dashboard a recalcular o novo streak em background
-        import('./dashboard.js').then(dash => { if (dash && dash.renderDashboard) dash.renderDashboard(); });
+    // Vincula os seletores de modo à máquina de estados
+    document.getElementById('btn-modo-metronome').addEventListener('click', () => {
+        mudarModoTreino('metronome');
+    });
+    document.getElementById('btn-modo-antipanic').addEventListener('click', () => {
+        mudarModoTreino('antipanic');
     });
 
-    container.innerHTML = `
-        <div class="trainer-summary" style="background: var(--bg-card); padding: 20px; border-radius: var(--radius-md); border: 1px solid #1e293b; text-align:center;">
-            <h2 style="color: var(--success); margin-bottom: 5px;">🎉 Sessão Concluída!</h2>
-            <p style="color: var(--text-muted); font-size:13px; margin-bottom: 20px;">Você limpou com sucesso todo o deck selecionado.</p>
+    // Inicia o processamento da fila baseado no modo escolhido
+    await carregarFilaDeCasos();
+}
 
-            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 25px; text-align: left;">
-                <div style="background:#020617; padding:10px; border-radius:6px; border:1px solid #1e293b;">
-                    <span style="font-size: 11px; color: var(--text-muted);">⏱️ Tempo Gasto</span>
-                    <strong style="display:block; font-size: 16px; color: #fff;">${elapsedMinutes}m ${elapsedSeconds}s</strong>
+/**
+ * Altera a máquina de estados e limpa loops em background
+ */
+function mudarModoTreino(novoModo) {
+    limparLoopsTreinador();
+    modoTreinoAtual = novoModo;
+    initTrainerScreen();
+}
+
+/**
+ * Limpa processos de áudio ou cronômetro ativos para evitar vazamento de memória
+ */
+function limparLoopsTreinador() {
+    if (metronomeIntervalId) {
+        clearInterval(metronomeIntervalId);
+        metronomeIntervalId = null;
+    }
+    if (timeoutReiniciarId) {
+        clearTimeout(timeoutReiniciarId);
+        timeoutReiniciarId = null;
+    }
+    if (intervaloCronometroId) {
+        clearInterval(intervaloCronometroId);
+        intervaloCronometroId = null;
+    }
+    window.removeEventListener('keydown', gerenciarKeyDownAntipanic);
+    window.removeEventListener('keyup', gerenciarKeyUpAntipanic);
+    cronometroRodandoAntipanic = false;
+    segurandoEspaco = false;
+    temporizadorPronto = false;
+    deVoltaNoLoop = false;
+}
+
+/**
+ * Carrega e ordena os algoritmos dinamicamente cruzando dados com o IndexedDB
+ */
+async function carregarFilaDeCasos() {
+    limparLoopsTreinador();
+    
+    let todosOsCasos = [];
+    if (cuberData.oll) todosOsCasos = todosOsCasos.concat(cuberData.oll.map(c => ({ ...c, grupo: 'oll' })));
+    if (cuberData.pll) todosOsCasos = todosOsCasos.concat(cuberData.pll.map(c => ({ ...c, grupo: 'pll' })));
+
+    if (modoTreinoAtual === 'metronome') {
+        filaDeCasosAtiva = todosOsCasos;
+        indexCasoAtual = 0;
+        renderizarModoMetronome();
+    } else {
+        const statusWorkspace = document.getElementById('trainer-workspace');
+        if (statusWorkspace) statusWorkspace.innerHTML = '<p style="text-align:center; color:var(--text-muted); padding: 20px;">Analisando estatísticas de performance...</p>';
+
+        const todosOsTempos = await getAllFromStore('times') || [];
+        const mapaMedias = new Map();
+        
+        todosOsCasos.forEach(c => mapaMedias.set(`${c.grupo}_${c.id}`, { caso: c, tempos: [], dnfCount: 0 }));
+
+        todosOsTempos.forEach(s => {
+            const chave = s.step;
+            if (mapaMedias.has(chave)) {
+                const estrutura = mapaMedias.get(chave);
+                if (s.isDNF) {
+                    estrutura.dnfCount++;
+                } else {
+                    estrutura.tempos.push(s.time);
+                }
+            }
+        });
+
+        const casosAvaliados = [];
+        mapaMedias.forEach((val, chave) => {
+            const ultimosTempos = val.tempos.slice(-5);
+            const media = ultimosTempos.length > 0 ? (ultimosTempos.reduce((a, b) => a + b, 0) / ultimosTempos.length) : 0;
+            const pontuacaoCritica = media + (val.dnfCount * 5);
+            casosAvaliados.push({ ...val.caso, mediaReal: media, criticidade: pontuacaoCritica });
+        });
+
+        casosAvaliados.sort((a, b) => b.criticidade - a.criticidade);
+        filaDeCasosAtiva = casosAvaliados.slice(0, 10);
+        indexCasoAtual = 0;
+
+        renderizarModoAntipanic();
+    }
+}
+
+/* ==========================================================================
+   ⚙️ ENGINE DO MODO A: METRÔNOMO DE TPS AUTOMATIZADO
+   ========================================================================== */
+function renderizarModoMetronome() {
+    const workspace = document.getElementById('trainer-workspace');
+    if (!workspace || filaDeCasosAtiva.length === 0) return;
+
+    const caso = filaDeCasosAtiva[indexCasoAtual];
+    const algPrincipal = caso.algs[0];
+    movimentosDecompostos = decomporAlgoritmo(algPrincipal);
+    
+    const tempoEstimadoTeorico = (movimentosDecompostos.length / tpsAlvo).toFixed(2);
+
+    workspace.innerHTML = `
+        <div class="dashboard-widget" style="text-align: center; padding: 20px; width: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 15px;">
+            
+            <div style="width: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: flex-start; gap: 4px;">
+                <label for="select-caso-metronome" style="font-size: 11px; color: var(--accent); font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;">Selecionar Caso Diretamente:</label>
+                <select id="select-caso-metronome" style="width: 100%; padding: 10px; font-size: 14px; background: #020617; color: var(--text-bright); border: 1px solid var(--border-color); border-radius: var(--radius-sm, 6px); font-family: sans-serif; cursor: pointer; outline: none;">
+                    ${filaDeCasosAtiva.map((c, idx) => `
+                        <option value="${idx}" ${idx === indexCasoAtual ? 'selected' : ''}>
+                            [${c.grupo.toUpperCase()}] ${c.name.toUpperCase()}
+                        </option>
+                    `).join('')}
+                </select>
+            </div>
+            
+            <div style="width: 100%; max-width: 110px; aspect-ratio: 1/1; display: flex; align-items: center; justify-content: center; margin-top: 5px;">
+                <img src="${getImagePath(caso.grupo, caso.id)}" style="max-width: 100%; max-height: 100%; object-fit: contain;" alt="Caso">
+            </div>
+            
+            <div style="background: rgba(0,0,0,0.2); padding: 14px; border-radius: var(--radius-sm, 6px); font-family: monospace; font-size: 16px; color: var(--text-bright); width: 100%; box-sizing: border-box; border: 1px dashed var(--border-color); white-space: normal; word-break: break-word;">
+                ${algPrincipal}
+            </div>
+
+            <div style="display: flex; width: 100%; gap: 10px; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.02); padding: 10px; border-radius: var(--radius-sm, 6px); box-sizing: border-box; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 120px; text-align: left;">
+                    <span style="display:block; font-size: 11px; color: var(--text-muted);">TPS ALVO</span>
+                    <div style="display: flex; align-items: center; gap: 10px; margin-top: 4px;">
+                        <button id="btn-tps-menos" class="btn-primary" style="padding: 4px 12px; font-size: 14px; min-width: 32px;">-</button>
+                        <strong id="display-tps" style="font-size: 18px; color: var(--text-bright); font-family: monospace;">${tpsAlvo.toFixed(1)}</strong>
+                        <button id="btn-tps-mais" class="btn-primary" style="padding: 4px 12px; font-size: 14px; min-width: 32px;">+</button>
+                    </div>
                 </div>
-                <div style="background:#020617; padding:10px; border-radius:6px; border:1px solid #1e293b;">
-                    <span style="font-size: 11px; color: var(--text-muted);">🎯 Precisão Real</span>
-                    <strong style="display:block; font-size: 16px; color: var(--accent);">${precisao}%</strong>
-                </div>
-                <div style="background:#020617; padding:10px; border-radius:6px; border:1px solid #1e293b;">
-                    <span style="font-size: 11px; color: var(--text-muted);">✅ De Primeira</span>
-                    <strong style="display:block; font-size: 16px; color: var(--success);">${sessionStats.totalCorrect}</strong>
-                </div>
-                <div style="background:#020617; padding:10px; border-radius:6px; border:1px solid #1e293b;">
-                    <span style="font-size: 11px; color: var(--text-muted);">⚠️ Falhas Retidas</span>
-                    <strong style="display:block; font-size: 16px; color: var(--danger);">${sessionStats.erradosNaSessao.size}</strong>
+                <div style="flex: 1; min-width: 140px; text-align: right; border-left: 1px solid rgba(88, 110, 117, 0.2); padding-left: 10px;">
+                    <span style="font-size: 11px; color: var(--text-muted); display: block;">METRICA DETALHADA</span>
+                    <strong style="font-size: 13px; color: var(--text-bright); font-family: monospace; display: block; margin-top: 2px;">${movimentosDecompostos.length} giros / <span style="color:var(--success);">${tempoEstimadoTeorico}s</span></strong>
                 </div>
             </div>
 
-            <button id="btn-finish-summary" class="btn-primary" style="width: 100%; padding: 12px; font-weight: bold; border-radius: 6px;">Voltar ao Menu</button>
+            <div id="metronome-flow-box" style="display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; width: 100%; box-sizing: border-box; margin: 5px 0;">
+                ${movimentosDecompostos.map((m, idx) => `<span id="step-mov-${idx}" style="padding: 5px 8px; background: rgba(255,255,255,0.04); border-radius: 4px; font-family: monospace; font-size: 13px; color: var(--text-muted); transition: all 0.1s ease; display: inline-block;">${m}</span>`).join('')}
+            </div>
+
+            <button id="btn-disparar-metronome" class="btn-primary" style="width: 100%; padding: 14px; font-size: 15px; font-weight: bold; margin-top: 5px; background: var(--accent);">
+                🔊 Iniciar Loops Estáveis
+            </button>
+            
+            <div style="display: flex; justify-content: space-between; width: 100%; border-top: 1px solid rgba(88, 110, 117, 0.1); padding-top: 12px; margin-top: 5px;">
+                <button id="btn-prev-metronome" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:13px; padding: 5px 10px;">⏮️ Anterior</button>
+                <button id="btn-next-metronome" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:13px; padding: 5px 10px;">Próximo ⏭️</button>
+            </div>
         </div>
     `;
 
-    document.getElementById('btn-finish-summary').onclick = () => {
-        import('./dashboard.js').then(d => d.renderDashboard());
-        initTrainerScreen();
-    };
+    // Handler para o dropdown de seleção direta de casos
+    document.getElementById('select-caso-metronome').addEventListener('change', (e) => {
+        limparLoopsTreinador(); // Limpa áudios pendentes antes de mudar
+        indexCasoAtual = parseInt(e.target.value);
+        renderizarModoMetronome();
+    });
+
+    document.getElementById('btn-tps-menos').addEventListener('click', () => { if (tpsAlvo > 1.0) { tpsAlvo -= 0.5; renderizarModoMetronome(); } });
+    document.getElementById('btn-tps-mais').addEventListener('click', () => { if (tpsAlvo < 12.0) { tpsAlvo += 0.5; renderizarModoMetronome(); } });
+
+    document.getElementById('btn-prev-metronome').addEventListener('click', () => { if (indexCasoAtual > 0) { limparLoopsTreinador(); indexCasoAtual--; renderizarModoMetronome(); } });
+    document.getElementById('btn-next-metronome').addEventListener('click', () => { if (indexCasoAtual < filaDeCasosAtiva.length - 1) { limparLoopsTreinador(); indexCasoAtual++; renderizarModoMetronome(); } });
+
+    document.getElementById('btn-disparar-metronome').addEventListener('click', gerenciarGatilhoMetronome);
+}
+
+function gerenciarGatilhoMetronome() {
+    const btn = document.getElementById('btn-disparar-metronome');
+    
+    if (metronomeIntervalId || timeoutReiniciarId) {
+        limparLoopsTreinador();
+        if (btn) {
+            btn.innerText = "🔊 Iniciar Loops Estáveis";
+            btn.style.background = "var(--accent)";
+        }
+        movimentosDecompostos.forEach((_, idx) => {
+            const el = document.getElementById(`step-mov-${idx}`);
+            if (el) { el.style.background = 'rgba(255,255,255,0.04)'; el.style.color = 'var(--text-muted)'; }
+        });
+        return;
+    }
+
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (btn) {
+        btn.innerText = "⏹️ Interromper Loop de Cadência";
+        btn.style.background = "var(--danger)";
+    }
+    
+    deVoltaNoLoop = false;
+    executarCicloMetronomeEngine();
+}
+
+function executarCicloMetronomeEngine() {
+    indexMovimentoMetronome = 0;
+    movimentosDecompostos.forEach((_, idx) => {
+        const el = document.getElementById(`step-mov-${idx}`);
+        if (el) { el.style.background = 'rgba(255,255,255,0.04)'; el.style.color = 'var(--text-muted)'; }
+    });
+
+    const intervaloMs = 1000 / tpsAlvo;
+    cronometroMetronomeStart = performance.now();
+
+    metronomeIntervalId = setInterval(() => {
+        if (indexMovimentoMetronome >= movimentosDecompostos.length) {
+            clearInterval(metronomeIntervalId);
+            metronomeIntervalId = null;
+            
+            // Ativa o gatilho para usar a frequência diferenciada no próximo ciclo
+            deVoltaNoLoop = true;
+
+            // Aguarda meio segundo (500ms) de descanso e reinicia o loop automaticamente
+            timeoutReiniciarId = setTimeout(() => {
+                timeoutReiniciarId = null;
+                executarCicloMetronomeEngine();
+            }, 500);
+            return;
+        }
+
+        try {
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            let frequenciaBipe = 750; // Som padrão para o fluxo interno do algoritmo
+            if (indexMovimentoMetronome === 0) {
+                frequenciaBipe = deVoltaNoLoop ? 1600 : 1100;
+            }
+
+            osc.frequency.setValueAtTime(frequenciaBipe, audioCtx.currentTime);
+            gainNode.gain.setValueAtTime(0.12, audioCtx.currentTime);
+            
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.03);
+        } catch (e) { console.warn("Audio Context suspenso."); }
+
+        const elAnterior = document.getElementById(`step-mov-${indexMovimentoMetronome - 1}`);
+        if (elAnterior) { elAnterior.style.background = 'rgba(133, 153, 0, 0.15)'; elAnterior.style.color = 'var(--success)'; }
+
+        const elAtual = document.getElementById(`step-mov-${indexMovimentoMetronome}`);
+        if (elAtual) {
+            elAtual.style.background = 'var(--accent)';
+            elAtual.style.color = 'var(--text-bright)';
+            elAtual.style.transform = 'scale(1.08)';
+            setTimeout(() => { elAtual.style.transform = 'scale(1)'; }, 70);
+        }
+
+        indexMovimentoMetronome++;
+    }, intervaloMs);
+}
+
+/* ==========================================================================
+   ⚙️ ENGINE DO MODO B: LABORATÓRIO ANTIPÂNICO ORIGINAL INTEGRAL
+   ========================================================================== */
+function renderizarModoAntipanic() {
+    const workspace = document.getElementById('trainer-workspace');
+    if (!workspace) return;
+
+    if (filaDeCasosAtiva.length === 0) {
+        workspace.innerHTML = `
+            <div class="dashboard-widget" style="text-align:center; padding: 30px; width:100%; box-sizing:border-box;">
+                <h3 style="color:var(--success); margin:0;">🎉 Alvos Limpos!</h3>
+                <p style="color:var(--text-muted); font-size:13px; margin: 10px 0 0 0;">Parabéns! Nenhuma fraqueza extrema encontrada no histórico recente da sua base de dados.</p>
+            </div>
+        `;
+        return;
+    }
+
+    const caso = filaDeCasosAtiva[indexCasoAtual];
+    const algPrincipal = caso.algs[0];
+    const scrambleInverso = gerarScrambleInverso(algPrincipal);
+
+    workspace.innerHTML = `
+        <div class="dashboard-widget" style="text-align: center; padding: 20px; width: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 15px; position: relative;">
+            
+            <div style="display:flex; justify-content:space-between; align-items:center; width: 100%; box-sizing: border-box;">
+                <span style="background: rgba(220,50,47,0.12); border: 1px solid rgba(220,50,47,0.25); color: var(--danger); font-size: 11px; padding: 4px 8px; border-radius: 6px; font-weight: bold;">
+                    ⚠️ ALVO CRÍTICO #${indexCasoAtual + 1}
+                </span>
+                <span style="font-family: monospace; font-size:12px; color: var(--text-muted);">
+                    Histórico: <strong style="color: var(--text-bright);">${caso.mediaReal > 0 ? caso.mediaReal.toFixed(2) + 's' : '--'}</strong>
+                </span>
+            </div>
+
+            <div>
+                <h2 id="antipanic-title" style="color: var(--text-bright); margin: 0; font-size: 24px; transition: opacity 0.15s ease;">${caso.name.toUpperCase()}</h2>
+            </div>
+            
+            <div id="antipanic-visual-box" style="width: 100%; max-width: 100px; aspect-ratio: 1/1; display: flex; align-items: center; justify-content: center; transition: opacity 0.15s ease;">
+                <img src="${getImagePath(caso.grupo, caso.id)}" style="max-width: 100%; max-height: 100%; object-fit: contain;" alt="Caso">
+            </div>
+
+            <div id="antipanic-scramble-box" style="background: rgba(2, 6, 23, 0.4); padding: 14px; border-radius: var(--radius-sm, 6px); border: 1px solid var(--border-color); width: 100%; box-sizing: border-box; transition: opacity 0.15s ease;">
+                <span style="display:block; font-size: 11px; color: var(--accent); font-weight:bold; text-transform:uppercase; margin-bottom: 6px; letter-spacing:0.5px;">Scramble Inverso (Gere o Caso no Cubo):</span>
+                <strong style="font-size: 15px; color: var(--text-bright); font-family: monospace; word-spacing: 2px; white-space: normal; word-break: break-word; display: block;">${scrambleInverso}</strong>
+            </div>
+
+            <div style="background: rgba(0,0,0,0.15); padding: 15px 10px; border-radius: var(--radius-md, 8px); border: 1px solid rgba(255,255,255,0.03); width: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                <div id="antipanic-timer-display" class="timer-big" style="font-size: 56px; font-weight: 800; font-family: monospace; color: var(--text-muted); user-select: none; line-height: 1; transition: color 0.05s ease;">
+                    0.00
+                </div>
+                <p id="antipanic-tip" style="font-size:11px; color: var(--text-muted); margin: 8px 0 0 0; transition: opacity 0.15s ease;">Segure <kbd style="background:rgba(255,255,255,0.1); padding: 1px 5px; border-radius:4px;">ESPAÇO</kbd> ou Toque para Armar</p>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; border-top: 1px solid rgba(88, 110, 117, 0.1); padding-top: 12px; box-sizing: border-box; gap: 10px;">
+                <button id="btn-next-antipanic" style="background:transparent; border:none; color:var(--text-main); cursor:pointer; font-size:13px; font-weight: 600; padding: 6px 12px; display: inline-flex; align-items: center; gap: 4px;">
+                    Próximo Alvo ⏭️
+                </button>
+                <button id="btn-ignorar-antipanic" style="background:transparent; border:none; color:var(--success); cursor:pointer; font-size:13px; font-weight:bold; padding: 6px 12px;">
+                    Superado ✓
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('btn-next-antipanic').addEventListener('click', () => {
+        if (indexCasoAtual < filaDeCasosAtiva.length - 1) { indexCasoAtual++; } else { indexCasoAtual = 0; }
+        renderizarModoAntipanic();
+    });
+
+    document.getElementById('btn-ignorar-antipanic').addEventListener('click', () => {
+        filaDeCasosAtiva.splice(indexCasoAtual, 1);
+        if (indexCasoAtual >= filaDeCasosAtiva.length) indexCasoAtual = 0;
+        renderizarModoAntipanic();
+    });
+
+    window.addEventListener('keydown', gerenciarKeyDownAntipanic);
+    window.addEventListener('keyup', gerenciarKeyUpAntipanic);
+
+    const painelNumerico = document.getElementById('antipanic-timer-display');
+    painelNumerico.addEventListener('touchstart', (e) => { e.preventDefault(); dispararGatilhoPressionado(); });
+    painelNumerico.addEventListener('touchend', (e) => { e.preventDefault(); dispararGatilhoSolto(); });
+}
+
+function gerenciarKeyDownAntipanic(e) {
+    if (e.code === 'Space') {
+        e.preventDefault();
+        dispararGatilhoPressionado();
+    }
+}
+
+function gerenciarKeyUpAntipanic(e) {
+    if (e.code === 'Space') {
+        e.preventDefault();
+        dispararGatilhoSolto();
+    }
+}
+
+function dispararGatilhoPressionado() {
+    if (cronometroRodandoAntipanic) {
+        pararCronometroAntipanic();
+        return;
+    }
+
+    if (segurandoEspaco) return;
+    segurandoEspaco = true;
+
+    const display = document.getElementById('antipanic-timer-display');
+    if (display) {
+        display.innerText = "0.00";
+        display.classList.remove('ready-to-trigger');
+        display.classList.add('holding-down'); 
+    }
+
+    temporizadorPronto = false;
+    timeoutSegurarId = setTimeout(() => {
+        if (segurandoEspaco) {
+            temporizadorPronto = true;
+            if (display) {
+                display.classList.remove('holding-down');
+                display.classList.add('ready-to-trigger');
+            }
+        }
+    }, 300);
+}
+
+function dispararGatilhoSolto() {
+    clearTimeout(timeoutSegurarId);
+    segurandoEspaco = false;
+
+    const display = document.getElementById('antipanic-timer-display');
+
+    if (!temporizadorPronto) {
+        if (display) display.classList.remove('holding-down', 'ready-to-trigger');
+        return;
+    }
+
+    if (temporizadorPronto && !cronometroRodandoAntipanic) {
+        temporizadorPronto = false;
+        cronometroRodandoAntipanic = true;
+        tempoStartAntipanic = performance.now();
+
+        if (display) {
+            display.classList.remove('holding-down', 'ready-to-trigger');
+            display.style.color = 'var(--text-bright)';
+        }
+
+        aplicarEfeitoOcultacaoGhost(true);
+
+        intervaloCronometroId = setInterval(() => {
+            const tempoPassado = (performance.now() - tempoStartAntipanic) / 1000;
+            if (display) display.innerText = tempoPassado.toFixed(2);
+        }, 10);
+    }
+}
+
+async function pararCronometroAntipanic() {
+    clearInterval(intervaloCronometroId);
+    cronometroRodandoAntipanic = false;
+
+    const tempoFinalCalculado = (performance.now() - tempoStartAntipanic) / 1000;
+    
+    const display = document.getElementById('antipanic-timer-display');
+    if (display) {
+        display.innerText = tempoFinalCalculado.toFixed(2);
+        display.style.color = 'var(--text-muted)';
+    }
+
+    aplicarEfeitoOcultacaoGhost(false);
+
+    const caso = filaDeCasosAtiva[indexCasoAtual];
+    try {
+        await saveToStore('times', {
+            time: parseFloat(tempoFinalCalculado.toFixed(2)),
+            scramble: `Drill Antipânico: ${caso.name}`,
+            date: new Date().toISOString(),
+            step: `${caso.grupo}_${caso.id}`,
+            isDNF: false,
+            hasPlusTwo: false
+        });
+
+        import('./dashboard.js').then(dash => { if (dash && dash.renderDashboard) dash.renderDashboard(); });
+    } catch (err) { console.error("Falha ao computar dados do treino:", err); }
+}
+
+function aplicarEfeitoOcultacaoGhost(ocultar) {
+    const elementos = [
+        document.getElementById('antipanic-title'),
+        document.getElementById('antipanic-visual-box'),
+        document.getElementById('antipanic-scramble-box'),
+        document.getElementById('antipanic-tip')
+    ];
+    
+    elementos.forEach(el => {
+        if (el) {
+            el.style.opacity = ocultar ? '0.01' : '1';
+            el.style.pointerEvents = ocultar ? 'none' : 'auto';
+        }
+    });
 }

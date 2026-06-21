@@ -89,4 +89,11 @@ export async function renderDashboard() {
             </div>
         </div>
     `;
+
+    // ✅ Chama a função do app.js importando o módulo dinamicamente em background
+    import('../app.js').then(app => {
+        if (app && typeof app.agendarLembreteDeStreak === 'function') {
+            app.agendarLembreteDeStreak();
+        }
+    }).catch(err => console.warn("Lembrete ignorado nesta tela:", err));
 }

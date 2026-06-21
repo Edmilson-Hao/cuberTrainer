@@ -62,3 +62,27 @@ self.addEventListener('fetch', (e) => {
     })
   );
 });
+
+// 🖱️ Escuta o clique na notificação e abre o App na aba do cronómetro
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close(); // Fecha o card da notificação
+
+    // Recupera a URL enviada nos dados da notificação
+    const urlParaAbrir = event.notification.data ? event.notification.data.url : '/';
+
+    event.waitUntil(
+        clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+            // Se o app já estiver aberto, foca na aba existente
+            for (let i = 0; i < windowClients.length; i++) {
+                const client = windowClients[i];
+                if (client.url === urlParaAbrir && 'focus' in client) {
+                    return client.focus();
+                }
+            }
+            // Se estiver fechado, abre uma nova janela com o app
+            if (clients.openWindow) {
+                return clients.openWindow(urlParaAbrir);
+            }
+        })
+    );
+});

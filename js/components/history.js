@@ -673,25 +673,28 @@ async function iniciarEmissorP2P() {
             `;
         });
 
-        // Quando o celular conectar com sucesso no PC
+        // Quando o celular (ou outro dispositivo) conectar com sucesso no PC
         localPeer.on('connection', (conn) => {
-            statusLabel.innerText = "Dispositivo conectado! Transferindo histórico...";
-            codeDisplay.innerHTML = ""; // Limpa o número da tela
+            statusLabel.innerText = "Dispositivo conectado! Transferindo dados completos...";
+            if (codeDisplay) codeDisplay.innerHTML = ""; 
             
             conn.on('open', async () => {
                 try {
                     const db = await import('../db.js');
+                    
+                    // 📦 Coleta ABSOLUTAMENTE TODOS os dados do IndexedDB local
                     const rawSolves = await db.getAllFromStore('times') || [];
                     const rawCases = await db.getAllFromStore('casesState') || [];
 
-                    // Dispara o payload via P2P local puro
+                    // Dispara o payload completo via P2P local puro
                     conn.send({
                         solves: rawSolves,
-                        cases: rawCases
+                        cases: rawCases // ✅ Agora o progresso e streaks dos flashcards vão aqui dentro!
                     });
                     
-                    statusLabel.innerHTML = "<span style='color: var(--success);'>✅ Dados enviados com sucesso!</span>";
+                    statusLabel.innerHTML = "<span style='color: var(--success);'>✅ Todo o histórico foi sincronizado!</span>";
                 } catch (dbErr) {
+                    console.error(dbErr);
                     statusLabel.innerText = "Erro ao ler banco local.";
                 } finally {
                     setTimeout(() => encerrarConexaoP2P(), 3500);
@@ -719,81 +722,88 @@ async function iniciarEmissorP2P() {
 /**
  * 📱 Conecta ao PC como Receptor (Consumidor do Código)
  */
-async function conectarComoReceptorP2P() {
-    const inputCodigo = document.getElementById('input-p2p-code');
+function conectarComoReceptorP2P(codigoAlvo) {
     const statusLabel = document.getElementById('p2p-status');
-    const codeDisplay = document.getElementById('p2p-code-display');
-    
-    if (!inputCodigo || inputCodigo.value.length !== 4) {
-        alert("Insira um código válido de 4 dígitos.");
-        return;
-    }
+    const inputCodigo = document.getElementById('p2p-code-input');
+
+    if (statusLabel) statusLabel.innerText = "Localizando par na rede...";
 
     if (localPeer) {
-        encerrarConexaoP2P();
+        localPeer.destroy();
+        localPeer = null;
     }
 
-    if (typeof Peer === 'undefined') {
-        statusLabel.innerText = "Carregando protocolo de comunicação...";
-        await carregarScriptPeerJS();
-    }
+    localPeer = new Peer();
 
-    statusLabel.innerText = "Buscando computador na rede local...";
-    if (codeDisplay) codeDisplay.innerHTML = "";
-    
-    localPeer = new Peer({ secure: true });
-    
     localPeer.on('open', () => {
-        const targetId = `cuber-trainer-${inputCodigo.value}`;
-        const conn = localPeer.connect(targetId, {
-            reliable: true
-        });
-        
+        const conn = localPeer.connect(codigoAlvo);
+
         conn.on('open', () => {
-            statusLabel.innerText = "Conectado! Aguardando payload...";
+            if (statusLabel) statusLabel.innerText = "Conectado! Aguardando dados...";
         });
 
         conn.on('data', async (data) => {
-            statusLabel.innerText = "Processando e mesclando dados recebidos...";
+            if (statusLabel) statusLabel.innerText = "Mesclando histórico e progresso de flashcards...";
             
             try {
                 const db = await import('../db.js');
                 
+                // 1. Sincroniza o histórico de resoluções (times)
                 if (data.solves && Array.isArray(data.solves)) {
                     for (const solve of data.solves) {
-                        await db.saveToStore('times', solve);
+                        await db.saveToStore(REAL_SOLVES_STORE, solve);
                     }
                 }
                 
+                // 2. Sincroniza o estado de aprendizado dos Flashcards (casesState)
                 if (data.cases && Array.isArray(data.cases)) {
-                    for (const c of data.cases) {
-                        await db.saveToStore('casesState', c);
+                    for (const caseState of data.cases) {
+                        await db.saveToStore('casesState', caseState);
                     }
                 }
 
-                statusLabel.innerHTML = "<span style='color: var(--success);'>✅ Histórico sincronizado com sucesso!</span>";
-                inputCodigo.value = "";
+                if (statusLabel) statusLabel.innerHTML = "<span style='color: var(--success);'>✅ Dispositivo 100% Sincronizado!</span>";
+                if (inputCodigo) inputCodigo.value = "";
                 
             } catch (error) {
-                statusLabel.innerText = "Falha ao gravar dados recebidos.";
+                console.error(error);
+                if (statusLabel) statusLabel.innerText = "Falha ao gravar dados recebidos.";
             } finally {
-                setTimeout(() => encerrarConexaoP2P(), 3500);
+                // Fechar conexões P2P locais de forma limpa
+                setTimeout(() => {
+                    if (localPeer) {
+                        localPeer.destroy();
+                        localPeer = null;
+                    }
+                    if (statusLabel) statusLabel.innerText = "Sincronização concluída.";
+
+                    // ==========================================
+                    // 🚀 ALTERAÇÃO Nº 3: RE-RENDERIZAÇÃO SUAVE
+                    // ==========================================
+                    // 1. Força o dashboard (cabeçalho) a recalcular o novo streak e progresso mesclado
+                    import('./dashboard.js').then(dash => {
+                        if (dash && typeof dash.renderDashboard === 'function') {
+                            dash.renderDashboard();
+                        }
+                    });
+                    
+                    // 2. Força a tela de histórico atual a reconstruir as médias e o gráfico Chart.js na hora
+                    initHistoryScreen();
+                    // ==========================================
+
+                }, 3500);
             }
         });
 
-        // Timeout de segurança se o ID não responder na rede
-        setTimeout(() => {
-            if (localPeer && statusLabel.innerText.includes("Buscando")) {
-                statusLabel.innerText = "Computador não encontrado. Verifique o código.";
-                encerrarConexaoP2P();
-            }
-        }, 8000);
+        conn.on('error', (err) => {
+            console.error(err);
+            if (statusLabel) statusLabel.innerText = "Erro na conexão com o par.";
+        });
     });
 
     localPeer.on('error', (err) => {
         console.error(err);
-        statusLabel.innerText = "Não foi possível conectar ao PC emissor.";
-        encerrarConexaoP2P();
+        if (statusLabel) statusLabel.innerText = "Não foi possível conectar. Verifique o código.";
     });
 }
 
@@ -822,7 +832,16 @@ function encerrarConexaoP2P() {
     
     // ✅ CORREÇÃO: Força a reinicialização limpa e completa da tela de Histórico.
     // Isso garante que o Chart.js encontre o canvas reconstruído no DOM e evita o erro de 'width'
+    // Força atualização suave de todos os módulos na tela do receptor
     setTimeout(() => {
+        // Se a tela atual for o dashboard, força ele a ler o novo banco mesclado
+        import('./dashboard.js').then(dash => {
+            if (dash && typeof dash.renderDashboard === 'function') {
+                dash.renderDashboard();
+            }
+        });
+        
+        // Se a tela atual for o histórico, força a reconstrução dos gráficos
         if (typeof initHistoryScreen === 'function') {
             initHistoryScreen();
         }

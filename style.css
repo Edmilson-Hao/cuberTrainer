@@ -1,28 +1,48 @@
 /* ==========================================================================
-   🎨 DESIGN SYSTEM & VARIÁVEIS (Dark Premium)
+   🎨 DESIGN SYSTEM & VARIÁVEIS (Dark Premium - Avançado)
    ========================================================================== */
 :root {
-    /* Base de Cores - Solarized Dark Rigoroso */
-    --bg-main: #002b36;       /* Fundo principal profundo */
-    --bg-card: #073642;       /* Superfície de blocos, caixas e cards */
-    --border-color: #586e75;  /* Bordas em cinza médio sutil */
+    /* Base de Cores - Solarized Dark Alinhado */
+    --bg-main: #001f27;       /* Fundo geral ligeiramente mais escuro e imersivo */
+    --bg-card: #073642;       
+    --border-color: rgba(88, 110, 117, 0.3); /* Bordas semi-transparentes mais elegantes */
 
-    /* Sistema de Textos Adaptativo Corrigido */
-    --text-main: #93a1a1;     /* Texto de leitura geral (Tons de cinza-claro/teal) */
-    --text-bright: #fdf6e3;   /* Títulos, segundos em foco e marcas de realce (Creme brilhante) */
-    --text-muted: #a1b5bd;    /* CORRIGIDO: Tom claro e nítido para Scrambles, datas e números secundários */
+    /* Sistema de Textos Adaptativo */
+    --text-main: #93a1a1;     
+    --text-bright: #fdf6e3;   
+    --text-muted: #a1b5bd;    
 
     /* Cores de Identidade e Ação */
-    --accent: #268bd2;         /* Azul Solarized */
-    --success: #859900;        /* Verde oliva */
-    --danger: #dc322f;         /* Vermelho Solarized para DNF */
-    --warning: #cb4b16;        /* Laranja para +2s */
+    --accent: #268bd2;         
+    --success: #2aa198;        /* Ciano Solarized (melhor legibilidade que o oliva anterior) */
+    --danger: #dc322f;         
+    --warning: #cb4b16;        
     
-    /* Layout */
-    --radius-sm: 6px;
-    --radius-md: 12px;
-    --shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
-    --transition: all 0.2s ease-in-out;
+    /* Layout Avançado */
+    --radius-sm: 8px;          /* Cantos um pouco mais suaves */
+    --radius-md: 12px;         
+    --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); /* Transição mais natural/orgânica */
+    
+    /* Neumorfismo e Sombras Elevadas de Profundidade */
+    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.2);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
+    --shadow-glow: 0 0 15px rgba(38, 139, 210, 0.25); /* Glow azul sutil para elementos ativos */
+}
+
+/* Scrollbar minimalista premium */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: var(--bg-main);
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(88, 110, 117, 0.4);
+    border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--accent);
 }
 
 /* --- REGRAS GERAIS DE CONTRASTE --- */
@@ -46,10 +66,21 @@ button[style*="background"] {
     color: var(--text-bright) !important;
 }
 
-.tab-selector button.active {
-    background: var(--accent) !important;
+.tab-selector button {
+    transition: var(--transition) !important;
+    position: relative;
+    overflow: hidden;
+}
+
+.tab-selector button:not(.active):hover {
+    background: rgba(7, 54, 66, 0.8) !important;
     color: var(--text-bright) !important;
-    border-color: var(--accent) !important;
+}
+
+.tab-selector button.active {
+    box-shadow: var(--shadow-sm) !important;
+    transform: scale(1.02);
+    border: 1px solid rgba(38, 139, 210, 0.4) !important;
 }
 
 /* --- CORREÇÃO: SEUS 12 MELHORES TEMPOS --- */
@@ -267,26 +298,49 @@ main {
 
 .case-card {
     background: var(--bg-card);
-    border: 1px solid rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     padding: 16px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    box-shadow: var(--shadow-sm);
     transition: var(--transition);
-    position: relative;
-    overflow: hidden;
 }
 
+/* Quando o mouse passa por cima do card de algoritmos */
 .case-card:hover {
-    transform: translateY(-4px);
-    background: var(--bg-card-hover);
-    border-color: rgba(255, 255, 255, 0.08);
+    transform: translateY(-3px);
+    border-color: rgba(38, 139, 210, 0.4);
+    box-shadow: var(--shadow-md);
 }
 
+/* Quando o caso está marcado como Aprendido: Borda verde brilhante premium */
 .case-card.learned {
-    border-color: rgba(0, 230, 118, 0.3);
-    background: linear-gradient(180deg, var(--bg-card) 0%, rgba(0, 230, 118, 0.02) 100%);
+    border-color: rgba(42, 161, 152, 0.5) !important;
+    background: linear-gradient(to bottom right, var(--bg-card), rgba(42, 161, 152, 0.03)) !important;
+}
+
+.btn-learned {
+    width: 100%;
+    padding: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-main);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.btn-learned:hover {
+    border-color: var(--accent);
+    color: var(--text-bright);
+}
+
+/* Estilo ativo do botão aprendido */
+.case-card.learned .btn-learned {
+    background: rgba(42, 161, 152, 0.1) !important;
+    border-color: var(--success) !important;
+    color: #2aa198 !important;
 }
 
 .case-img {
@@ -339,12 +393,6 @@ main {
     transition: var(--transition);
 }
 
-.case-card.learned .btn-learned {
-    background: var(--success-bg);
-    color: var(--success);
-    border-color: rgba(0, 230, 118, 0.2);
-}
-
 /* ==========================================================================
    ⏱️ CRONÔMETRO (Foco Absoluto)
    ========================================================================== */
@@ -368,14 +416,24 @@ main {
 }
 
 .timer-big {
-    font-size: 110px;
-    font-weight: 200;
-    font-family: -apple-system-font, monospace;
+    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    font-size: 84px; /* Tamanho massivo e imponente */
+    font-weight: 800;
     letter-spacing: -2px;
-    margin-bottom: 40px;
-    cursor: pointer;
-    user-select: none;
-    transition: color 0.15s ease;
+    transition: transform 0.1s ease, color 0.1s ease;
+}
+
+/* 🔴 Segurando o espaço/tela: diminui levemente simulando pressão mecânica */
+.timer-big.holding-down {
+    color: #dc322f !important;
+    transform: scale(0.96);
+}
+
+/* 🟢 Pronto para disparar: pulsa ligeiramente para frente avisando o gatilho */
+.timer-big.ready-to-trigger {
+    color: #2aa198 !important;
+    transform: scale(1.04);
+    text-shadow: 0 0 20px rgba(42, 161, 152, 0.4);
 }
 
 .timer-big.inspecting {
@@ -474,22 +532,30 @@ select {
 }
 
 .btn-primary {
-    background: var(--accent-gradient);
-    color: #000;
+    background: linear-gradient(135deg, var(--accent), #1a69a4) !important;
+    color: var(--text-bright) !important;
+    border: none !important;
+    padding: 12px 24px;
+    font-size: 14px;
     font-weight: 700;
-    border: none;
-    padding: 16px;
-    width: 100%;
-    border-radius: var(--radius-md);
-    font-size: 16px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
-    box-shadow: 0 4px 20px rgba(0, 242, 254, 0.2);
+    box-shadow: var(--shadow-sm);
     transition: var(--transition);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
 }
 
 .btn-primary:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 24px rgba(0, 242, 254, 0.3);
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-glow);
+    filter: brightness(1.1);
+}
+
+.btn-primary:active {
+    transform: translateY(1px);
 }
 
 /* Flashcard ativo */
@@ -1128,18 +1194,6 @@ select {
 /* ==========================================================================
    🎯 FEEDBACKS DE COR DO CRONÔMETRO (ESTILO STACKMAT)
    ========================================================================== */
-/* 🔴 1. Ao tocar/segurar: Zera o número e fica Vermelho */
-.timer-big.holding-down {
-    color: #ff3b30 !important; /* Vermelho vivo de aviso */
-    transition: color 0.05s ease;
-}
-
-/* 🟢 2. Após segurar por 300ms: Sinaliza VERDE (Pronto para soltar e iniciar) */
-.timer-big.ready-to-trigger {
-    color: #4cd964 !important; /* Verde oficial de campeonato */
-    transition: color 0.05s ease;
-}
-
 /* Zona de Perigo - Redefinição do Sistema */
 .danger-zone-container {
     margin-top: 30px;
@@ -1172,4 +1226,91 @@ select {
 .btn-reset-danger:hover, .btn-reset-danger:active {
     background: var(--danger);
     color: var(--text-bright);
+}
+
+/* ==========================================================================
+   💎 ELEMENTOS DE ALTO IMPACTO VISUAL (Premium Glassmorphism)
+   ========================================================================== */
+
+/* 1. Efeito de Vidro Fosco e Brilho de Borda nos Cards Principais */
+.dashboard-widget, .case-card, .history-screen, .timer-screen {
+    background: rgba(7, 54, 66, 0.7) !important;
+    backdrop-filter: blur(12px); /* Desfoca suavemente o fundo atrás do card */
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(147, 161, 161, 0.15) !important;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37) !important;
+}
+
+/* 2. Animação Pulsante Sutil no Fogo do Streak (Dashboard) */
+.streak-badge {
+    animation: glowPulse 2s infinite ease-in-out;
+    letter-spacing: 0.5px;
+    box-shadow: 0 0 10px rgba(255, 110, 59, 0.1);
+}
+
+@keyframes glowPulse {
+    0% { box-shadow: 0 0 8px rgba(255, 110, 59, 0.15); transform: scale(1); }
+    50% { box-shadow: 0 0 18px rgba(255, 110, 59, 0.35); transform: scale(1.02); }
+    100% { box-shadow: 0 0 8px rgba(255, 110, 59, 0.15); transform: scale(1); }
+}
+
+/* 3. Iluminação Neon na Barra de Progresso do Domínio CFOP */
+.progress-bar-fill {
+    box-shadow: 0 0 12px var(--accent);
+    position: relative;
+    overflow: hidden;
+}
+
+/* Efeito de brilho laser correndo na barra de progresso */
+.progress-bar-fill::after {
+    content: '';
+    position: absolute;
+    top: 0; left: -100%; width: 50%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+    animation: laserScan 3s infinite linear;
+}
+
+@keyframes laserScan {
+    0% { left: -100%; }
+    100% { left: 150%; }
+}
+
+/* 4. Navbar Futurista Fluida */
+nav {
+    background: rgba(0, 31, 39, 0.85) !important;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid rgba(88, 110, 117, 0.2);
+}
+
+nav button {
+    position: relative;
+    font-weight: 600 !important;
+}
+
+/* Linha neon embaixo do botão ativo da Navbar */
+nav button.active::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 25%; width: 50%; height: 3px;
+    background: var(--accent);
+    border-radius: 3px 3px 0 0;
+    box-shadow: 0 0 10px var(--accent);
+}
+
+/* 5. Centralização Limpa do Cronómetro e Efeito de Foco */
+.timer-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 60vh;
+}
+
+/* Esconde o cabeçalho suavemente enquanto o timer está rodando para dar imersão extrema */
+body.timer-running nav, 
+body.timer-running .dashboard-widget {
+    opacity: 0.05;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
 }
