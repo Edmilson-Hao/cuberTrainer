@@ -1,6 +1,5 @@
 import { cuberData, getImagePath } from '../data.js';
 import { getAllFromStore, saveToStore } from '../db.js';
-import { incrementStreak } from './dashboard.js';
 
 let currentSessionQueue = [];
 let queueIndex = 0;
@@ -232,7 +231,18 @@ function renderTrainerSummary() {
     const totalRespondidos = sessionStats.totalCorrect + sessionStats.erradosNaSessao.size;
     const precisao = totalRespondidos > 0 ? ((sessionStats.totalCorrect / totalRespondidos) * 100).toFixed(0) : 100;
 
-    if (precisao >= 80) incrementStreak();
+    // ✅ BÔNUS: Cria um registro simbólico no histórico para computar a sessão de flashcards no seu Streak!
+    saveToStore('times', {
+        time: 0.00,
+        scramble: `Treino de Flashcards: ${totalRespondidos} casos revisados`,
+        date: new Date().toISOString(),
+        step: 'all', 
+        isDNF: false,
+        hasPlusTwo: false
+    }).then(() => {
+        // Força o dashboard a recalcular o novo streak em background
+        import('./dashboard.js').then(dash => { if (dash && dash.renderDashboard) dash.renderDashboard(); });
+    });
 
     container.innerHTML = `
         <div class="trainer-summary" style="background: var(--bg-card); padding: 20px; border-radius: var(--radius-md); border: 1px solid #1e293b; text-align:center;">
