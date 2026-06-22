@@ -1,5 +1,6 @@
 import { saveToStore, getAllFromStore, deleteFromStore } from '../db.js';
 import { cuberData } from '../data.js';
+import { agendarLembreteDeStreak } from '../app.js';
 
 let timerInterval = null;
 let startTime = 0;
@@ -310,7 +311,11 @@ async function saveTime(timeValue, isDnfForced = false) {
     
     updateLiveAverages();
     import('./dashboard.js').then(dash => { if (dash && dash.renderDashboard) dash.renderDashboard(); });
-    agendarLembreteDeStreak();
+    
+    // CORRIGIDO: Removida a linha duplicada que quebrava o script e adicionado o await seguro
+    if (typeof agendarLembreteDeStreak === 'function') {
+        await agendarLembreteDeStreak();
+    }
 }
 
 async function applyQuickPlusTwo() {

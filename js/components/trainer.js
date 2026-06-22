@@ -4,9 +4,16 @@ import { getAllFromStore, saveToStore } from '../db.js';
 import { gerarScrambleInverso, decomporAlgoritmo } from './scrambler.js';
 
 // Máquina de Estados e Variáveis de Controle Global do Treinador
-let modoTreinoAtual = 'metronome'; // 'metronome' ou 'antipanic'
+let modoTreinoAtual = 'workout'; // 'workout' (Padrão inicial agora), 'metronome' ou 'antipanic'
 let filaDeCasosAtiva = [];
 let indexCasoAtual = 0;
+
+// Estado do Modo de Metas Diárias (Workout)
+let currentWorkoutStep = 'cross'; // 'cross', 'f2l', 'oll', 'pll'
+let workoutTimerInterval = null;
+let workoutStartTime = 0;
+let isWorkoutTimerRunning = false;
+let workoutEspacoPressionado = false;
 
 // Estado do Metrônomo (Otimizado com Auto-Restart e Bipes Exclusivos)
 let tpsAlvo = 4.0;
@@ -33,15 +40,18 @@ export async function initTrainerScreen() {
     const container = document.getElementById('app-container');
     if (!container) return;
 
-    // Renderiza o esqueleto estrutural perfeitamente responsivo, integrado ao CSS global
+    // Renderiza o seletor com 3 abas agora, incluindo o novo ecossistema "Treinar por Metas"
     container.innerHTML = `
         <div class="trainer-screen" style="width: 100%; max-width: 600px; margin: 0 auto; padding: 10px; box-sizing: border-box;">
             
-            <div class="tab-selector" style="display: flex; gap: 8px; background: rgba(2, 6, 23, 0.5); padding: 6px; border-radius: var(--radius-md, 8px); margin-bottom: 20px; border: 1px solid rgba(88, 110, 117, 0.2); width: 100%; box-sizing: border-box;">
-                <button id="btn-modo-metronome" class="${modoTreinoAtual === 'metronome' ? 'active' : ''}" style="flex: 1; padding: 12px 8px; font-size: 13px; font-weight: bold; border: none; border-radius: var(--radius-sm, 6px); cursor: pointer; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">
+            <div class="tab-selector" style="display: flex; gap: 6px; background: rgba(2, 6, 23, 0.5); padding: 6px; border-radius: var(--radius-md, 8px); margin-bottom: 20px; border: 1px solid rgba(88, 110, 117, 0.2); width: 100%; box-sizing: border-box;">
+                <button id="btn-modo-workout" class="${modoTreinoAtual === 'workout' ? 'active' : ''}" style="flex: 1; padding: 12px 6px; font-size: 12px; font-weight: bold; border: none; border-radius: var(--radius-sm, 6px); cursor: pointer; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">
+                    🎯 Metas do Dia
+                </button>
+                <button id="btn-modo-metronome" class="${modoTreinoAtual === 'metronome' ? 'active' : ''}" style="flex: 1; padding: 12px 6px; font-size: 12px; font-weight: bold; border: none; border-radius: var(--radius-sm, 6px); cursor: pointer; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">
                     ⏱️ Metrônomo
                 </button>
-                <button id="btn-modo-antipanic" class="${modoTreinoAtual === 'antipanic' ? 'active' : ''}" style="flex: 1; padding: 12px 8px; font-size: 13px; font-weight: bold; border: none; border-radius: var(--radius-sm, 6px); cursor: pointer; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">
+                <button id="btn-modo-antipanic" class="${modoTreinoAtual === 'antipanic' ? 'active' : ''}" style="flex: 1; padding: 12px 6px; font-size: 12px; font-weight: bold; border: none; border-radius: var(--radius-sm, 6px); cursor: pointer; white-space: nowrap; text-overflow: ellipsis; overflow: hidden;">
                     🔥 Antipânico
                 </button>
             </div>
@@ -50,7 +60,10 @@ export async function initTrainerScreen() {
         </div>
     `;
 
-    // Vincula os seletores de modo à máquina de estados
+    // Vincula os seletores à máquina de estados expandida
+    document.getElementById('btn-modo-workout').addEventListener('click', () => {
+        mudarModoTreino('workout');
+    });
     document.getElementById('btn-modo-metronome').addEventListener('click', () => {
         mudarModoTreino('metronome');
     });
@@ -58,7 +71,7 @@ export async function initTrainerScreen() {
         mudarModoTreino('antipanic');
     });
 
-    // Inicia o processamento da fila baseado no modo escolhido
+    // Inicia o processamento baseado na aba ativa
     await carregarFilaDeCasos();
 }
 
@@ -75,6 +88,7 @@ function mudarModoTreino(novoModo) {
  * Limpa processos de áudio ou cronômetro ativos para evitar vazamento de memória
  */
 function limparLoopsTreinador() {
+    // 1. Limpa todos os loops de cronometragem ativos
     if (metronomeIntervalId) {
         clearInterval(metronomeIntervalId);
         metronomeIntervalId = null;
@@ -87,8 +101,36 @@ function limparLoopsTreinador() {
         clearInterval(intervaloCronometroId);
         intervaloCronometroId = null;
     }
-    window.removeEventListener('keydown', gerenciarKeyDownAntipanic);
-    window.removeEventListener('keyup', gerenciarKeyUpAntipanic);
+    if (workoutTimerInterval) {
+        clearInterval(workoutTimerInterval);
+        workoutTimerInterval = null;
+    }
+
+    // 2. Remove listeners globais vinculados ao modo de metas (Workout)
+    if (window._workoutKeyDownRef) {
+        window.removeEventListener('keydown', window._workoutKeyDownRef);
+        window._workoutKeyDownRef = null;
+    }
+    if (window._workoutKeyUpRef) {
+        window.removeEventListener('keyup', window._workoutKeyUpRef);
+        window._workoutKeyUpRef = null;
+    }
+    if (window._workoutKeyRef) {
+        window.removeEventListener('keydown', window._workoutKeyRef);
+        window._workoutKeyRef = null;
+    }
+
+    // 3. Remove listeners globais vinculados ao modo Antipânico
+    if (typeof gerenciarKeyDownAntipanic !== 'undefined') {
+        window.removeEventListener('keydown', gerenciarKeyDownAntipanic);
+    }
+    if (typeof gerenciarKeyUpAntipanic !== 'undefined') {
+        window.removeEventListener('keyup', gerenciarKeyUpAntipanic);
+    }
+
+    // 4. Reseta as flags e estados de execução para o ponto neutro
+    isWorkoutTimerRunning = false;
+    workoutEspacoPressionado = false;
     cronometroRodandoAntipanic = false;
     segurandoEspaco = false;
     temporizadorPronto = false;
@@ -105,7 +147,9 @@ async function carregarFilaDeCasos() {
     if (cuberData.oll) todosOsCasos = todosOsCasos.concat(cuberData.oll.map(c => ({ ...c, grupo: 'oll' })));
     if (cuberData.pll) todosOsCasos = todosOsCasos.concat(cuberData.pll.map(c => ({ ...c, grupo: 'pll' })));
 
-    if (modoTreinoAtual === 'metronome') {
+    if (modoTreinoAtual === 'workout') {
+        renderizarModoWorkout();
+    } else if (modoTreinoAtual === 'metronome') {
         filaDeCasosAtiva = todosOsCasos;
         indexCasoAtual = 0;
         renderizarModoMetronome();
@@ -147,6 +191,287 @@ async function carregarFilaDeCasos() {
 }
 
 /* ==========================================================================
+   🎯 ENGINE DO MODO NOVO: SESSÃO DE METAS DIÁRIAS DINÂMICAS
+   ========================================================================== */
+async function renderizarModoWorkout() {
+    const workspace = document.getElementById('trainer-workspace');
+    if (!workspace) return;
+
+    // Garante compatibilidade de nome com o seu chamador original
+    if (typeof renderModoWorkout === 'undefined') {
+        window.renderModoWorkout = renderizarModoWorkout;
+    }
+
+    // Busca os tempos históricos direto da store para calcular o progresso das missões
+    const todosOsTempos = await getAllFromStore('times') || [];
+    
+    const countCross = todosOsTempos.filter(s => s.step === 'cross').length;
+    const countF2L = todosOsTempos.filter(s => s.step === 'f2l').length;
+    const countOLL = todosOsTempos.filter(s => s.step === 'oll').length;
+    const countPLL = todosOsTempos.filter(s => s.step === 'pll').length;
+
+    const pctCross = Math.min((countCross / 10) * 100, 100);
+    const pctF2L = Math.min((countF2L / 10) * 100, 100);
+    const pctOLL = Math.min((countOLL / 10) * 100, 100);
+    const pctPLL = Math.min((countPLL / 10) * 100, 100);
+
+    let metasConcluidas = 0;
+    if (countCross >= 10) metasConcluidas++;
+    if (countF2L >= 10) metasConcluidas++;
+    if (countOLL >= 10) metasConcluidas++;
+    if (countPLL >= 10) metasConcluidas++;
+
+    const scrambleGerado = gerarScramblePorEtapa(currentWorkoutStep);
+
+    workspace.innerHTML = `
+        <div style="display: flex; flex-direction: column; gap: 16px; width: 100%; box-sizing: border-box;">
+            
+            <div style="background: rgba(2, 6, 23, 0.4); padding: 15px; border-radius: var(--radius-md, 8px); border: 1px solid rgba(88, 110, 117, 0.15);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <span style="font-size: 12px; color: var(--text-bright); font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;">🎯 Missões Diárias de Eficiência</span>
+                    <span style="font-size: 11px; color: var(--accent); font-family: monospace; font-weight: bold;">${metasConcluidas}/4 Concluídas</span>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+                    <div class="workout-goal-card" data-workout-step="cross" style="background: rgba(0,0,0,0.2); border: 1px solid ${currentWorkoutStep === 'cross' ? 'var(--accent)' : 'transparent'}; padding: 8px 10px; border-radius: 6px; cursor: pointer;">
+                        <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: bold; color: ${currentWorkoutStep === 'cross' ? 'var(--text-bright)' : 'var(--text-muted)'}; margin-bottom: 4px;">
+                            <span>✝️ 1. A Cruz</span> <span>${countCross}/10</span>
+                        </div>
+                        <div style="width: 100%; height: 4px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden;">
+                            <div style="width: ${pctCross}%; height: 100%; background: var(--accent);"></div>
+                        </div>
+                    </div>
+
+                    <div class="workout-goal-card" data-workout-step="f2l" style="background: rgba(0,0,0,0.2); border: 1px solid ${currentWorkoutStep === 'f2l' ? 'var(--success)' : 'transparent'}; padding: 8px 10px; border-radius: 6px; cursor: pointer;">
+                        <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: bold; color: ${currentWorkoutStep === 'f2l' ? 'var(--text-bright)' : 'var(--text-muted)'}; margin-bottom: 4px;">
+                            <span>🧱 2. F2L Completo</span> <span>${countF2L}/10</span>
+                        </div>
+                        <div style="width: 100%; height: 4px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden;">
+                            <div style="width: ${pctF2L}%; height: 100%; background: var(--success);"></div>
+                        </div>
+                    </div>
+
+                    <div class="workout-goal-card" data-workout-step="oll" style="background: rgba(0,0,0,0.2); border: 1px solid ${currentWorkoutStep === 'oll' ? '#b58900' : 'transparent'}; padding: 8px 10px; border-radius: 6px; cursor: pointer;">
+                        <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: bold; color: ${currentWorkoutStep === 'oll' ? 'var(--text-bright)' : 'var(--text-muted)'}; margin-bottom: 4px;">
+                            <span>🟡 3. OLL Pura</span> <span>${countOLL}/10</span>
+                        </div>
+                        <div style="width: 100%; height: 4px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden;">
+                            <div style="width: ${pctOLL}%; height: 100%; background: #b58900;"></div>
+                        </div>
+                    </div>
+
+                    <div class="workout-goal-card" data-workout-step="pll" style="background: rgba(0,0,0,0.2); border: 1px solid ${currentWorkoutStep === 'pll' ? '#2aa198' : 'transparent'}; padding: 8px 10px; border-radius: 6px; cursor: pointer;">
+                        <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: bold; color: ${currentWorkoutStep === 'pll' ? 'var(--text-bright)' : 'var(--text-muted)'}; margin-bottom: 4px;">
+                            <span>🟢 4. PLL Pura</span> <span>${countPLL}/10</span>
+                        </div>
+                        <div style="width: 100%; height: 4px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden;">
+                            <div style="width: ${pctPLL}%; height: 100%; background: #2aa198;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dashboard-widget" style="text-align: center; padding: 20px; display: flex; flex-direction: column; gap: 15px; border: 1px solid rgba(88, 110, 117, 0.2);">
+                <div>
+                    <span style="font-size: 11px; font-weight: bold; text-transform: uppercase; color: var(--accent); letter-spacing: 0.5px;">
+                        Foco de Entrada: Solves de <strong>${currentWorkoutStep.toUpperCase()}</strong>
+                    </span>
+                </div>
+
+                <div id="workout-scramble-text" style="background: rgba(0,0,0,0.25); padding: 14px; border-radius: 6px; border: 1px dashed var(--border-color); font-family: monospace; font-size: 14px; color: var(--text-bright); line-height: 1.4; word-break: break-word;">
+                    ${scrambleGerado}
+                </div>
+
+                <div id="workout-timer-box" style="background: rgba(0,0,0,0.25); padding: 60px 10px; border-radius: 8px; border: 2px solid rgba(38, 139, 210, 0.3); cursor: pointer; user-select: none; width: 100%; box-sizing: border-box; text-align: center; margin-top: 10px;">
+                    <div id="workout-timer-num" style="font-size: 72px; font-family: monospace; font-weight: 800; color: var(--text-bright); line-height: 1;">0.00</div>
+                    <span id="workout-timer-tip" style="font-size: 12px; color: var(--text-muted); display: block; margin-top: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;">Clique aqui ou Pressione <kbd style="background:rgba(255,255,255,0.1); padding: 2px 6px; border-radius:4px; font-family:monospace;">ESPAÇO</kbd> para rodar</span>
+                </div>
+
+                <div style="border-top: 1px solid rgba(88, 110, 117, 0.1); padding-top: 12px; display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+                    <span style="color: var(--text-muted);">Sessão Recente:</span>
+                    <div id="workout-mini-panel" style="font-family: monospace; color: var(--success); font-weight: bold;">--</div>
+                </div>
+            </div>
+
+        </div>
+    `;
+    
+    // 1. Ouvintes Inteligentes para Toque na Tela (Celular e Mouse) - CORRIGIDO
+    // 1. Ouvintes Simplificados e Unificados para Tela (Celular e Mouse)
+    // 1. Ouvintes Inteligentes para Toque na Tela (Telemóvel e Rato)
+    const timerBoxEl = document.getElementById('workout-timer-box');
+    if (timerBoxEl) {
+        // Bloqueia cliques fantasmas no telemóvel
+        timerBoxEl.addEventListener('touchstart', (e) => {
+            e.preventDefault(); 
+            if (isWorkoutTimerRunning) {
+                alternarCronometroWorkout(); // Para imediatamente ao tocar
+            } else {
+                workoutEspacoPressionado = true;
+                const displayNum = document.getElementById('workout-timer-num');
+                if (displayNum) displayNum.style.color = 'var(--danger)'; // Vermelho: Preparado...
+            }
+        }, { passive: false });
+
+        timerBoxEl.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            if (!isWorkoutTimerRunning && workoutEspacoPressionado) {
+                workoutEspacoPressionado = false;
+                alternarCronometroWorkout(); // Inicia ao largar o ecrã
+            }
+        }, { passive: false });
+
+        // Suporte para Rato (Ambiente de Trabalho)
+        timerBoxEl.addEventListener('mousedown', (e) => {
+            if (e.pointerType === 'touch') return; 
+            if (isWorkoutTimerRunning) {
+                alternarCronometroWorkout(); // Para ao clicar
+            } else {
+                workoutEspacoPressionado = true;
+                const displayNum = document.getElementById('workout-timer-num');
+                if (displayNum) displayNum.style.color = 'var(--danger)';
+            }
+        });
+
+        timerBoxEl.addEventListener('mouseup', (e) => {
+            if (e.pointerType === 'touch') return;
+            if (!isWorkoutTimerRunning && workoutEspacoPressionado) {
+                workoutEspacoPressionado = false;
+                alternarCronometroWorkout(); // Inicia ao largar o clique
+            }
+        });
+    }
+
+    // 2. Ouvintes corrigidos para a Barra de Espaço (Teclado)
+    const gerenciarKeyDownWorkout = (e) => {
+        if (e.code === 'Space' && modoTreinoAtual === 'workout') {
+            e.preventDefault();
+            
+            if (isWorkoutTimerRunning) {
+                alternarCronometroWorkout(); // Se está a rodar, para imediatamente no keydown
+                return;
+            }
+
+            if (!workoutEspacoPressionado) {
+                workoutEspacoPressionado = true;
+                const displayNum = document.getElementById('workout-timer-num');
+                if (displayNum) displayNum.style.color = 'var(--danger)'; // Fica vermelho à espera
+            }
+        }
+    };
+
+    const gerenciarKeyUpWorkout = (e) => {
+        if (e.code === 'Space' && modoTreinoAtual === 'workout') {
+            e.preventDefault();
+            
+            // Só inicia o cronómetro se ele estava em modo de preparação (vermelho)
+            if (!isWorkoutTimerRunning && workoutEspacoPressionado) {
+                workoutEspacoPressionado = false;
+                alternarCronometroWorkout(); // Inicia de facto ao soltar a barra
+            }
+        }
+    };
+
+    // Escutadores de eventos dos cards de metas (Abas superiores)
+    document.querySelectorAll('.workout-goal-card').forEach(card => {
+        card.addEventListener('click', () => {
+            if (isWorkoutTimerRunning) return;
+            currentWorkoutStep = card.getAttribute('data-workout-step');
+            renderizarModoWorkout();
+        });
+    });
+
+    // Renderiza os últimos 3 tempos salvos no painel inferior
+    const miniPanel = document.getElementById('workout-mini-panel');
+    const filtrados = todosOsTempos.filter(s => s.step === currentWorkoutStep).slice(-3).map(s => s.time.toFixed(2) + 's');
+    if (filtrados.length > 0) miniPanel.innerHTML = filtrados.join(' <span style="color:var(--text-muted)">|</span> ');
+
+    // Limpa referências antigas para evitar a duplicação na troca de abas
+    window.removeEventListener('keydown', window._workoutKeyDownRef);
+    window.removeEventListener('keyup', window._workoutKeyUpRef);
+
+    // Guarda as referências atuais para limpeza futura
+    window._workoutKeyDownRef = gerenciarKeyDownWorkout;
+    window._workoutKeyUpRef = gerenciarKeyUpWorkout;
+
+    // Aplica os escutadores na janela global
+    window.addEventListener('keydown', window._workoutKeyDownRef);
+    window.addEventListener('keyup', window._workoutKeyUpRef);
+}
+
+
+
+// CONTROLADOR UNIFICADO E BLINDADO CONTRA SEGUNDOS DISPAROS
+// CONTROLADOR CENTRALIZADO - CRONÓMETRO DE METAS
+async function alternarCronometroWorkout() {
+    const displayNum = document.getElementById('workout-timer-num');
+    const displayTip = document.getElementById('workout-timer-tip');
+    if (!displayNum) return;
+
+    if (isWorkoutTimerRunning) {
+        // PARAR O CRONÓMETRO
+        clearInterval(workoutTimerInterval);
+        isWorkoutTimerRunning = false;
+        workoutEspacoPressionado = false;
+        
+        const tempoFinal = (performance.now() - workoutStartTime) / 1000;
+
+        displayNum.innerText = tempoFinal.toFixed(2);
+        displayNum.style.color = 'var(--text-bright)';
+        if (displayTip) displayTip.innerText = "Salvo! A atualizar metas...";
+
+        await salvarTempoDeMetaNoBanco(tempoFinal);
+    } else {
+        // INICIAR O CRONÓMETRO
+        isWorkoutTimerRunning = true;
+        workoutStartTime = performance.now();
+        
+        displayNum.style.color = 'var(--success)';
+        if (displayTip) displayTip.innerText = "A executar etapa... Pressione ESPAÇO ou Toque para parar";
+
+        clearInterval(workoutTimerInterval);
+        workoutTimerInterval = setInterval(() => {
+            const diff = (performance.now() - workoutStartTime) / 1000;
+            displayNum.innerText = diff.toFixed(2);
+        }, 10);
+    }
+}
+
+// CORRIGIDO: Nome da função de renderização corrigido para renderizarModoWorkout()
+async function salvarTempoDeMetaNoBanco(tempo) {
+    try {
+        await saveToStore('times', {
+            id: 'workout_' + Date.now(), // ID do tipo String
+            time: parseFloat(tempo.toFixed(2)),
+            scramble: `Treino de Meta Isolada: ${currentWorkoutStep.toUpperCase()}`,
+            date: new Date().toISOString(),
+            step: currentWorkoutStep, 
+            isDNF: false,
+            hasPlusTwo: false
+        });
+        
+        // Chamada corrigida com o nome correto da função
+        renderizarModoWorkout();
+    } catch (e) {
+        console.error("Erro ao persistir tempo de meta:", e);
+    }
+}
+
+// Adicione suporte ao ESPAÇO no Modo Workout dentro da sua função limparLoopsTreinador e initTrainerScreen
+// Altere o topo da sua função initTrainerScreen para escutar o espaço globalmente se estiver no modo workout:
+
+function gerarScramblePorEtapa(etapa) {
+    // Retorna embaralhamentos focados em isolar cada step do CFOP
+    const bancoScrambles = {
+        cross: "D R2 U2 B2 U2 F2 D' L2 B2 F2 R2 B' R2 U B2 F' R F' L' D2",
+        f2l: "U R U' R' U' L' U L F2 R2 U' R2 U R2 F2",
+        oll: "R U2 R2 F R F' U2 R' F R F'",
+        pll: "M2 U M2 U2 M2 U M2"
+    };
+    return bancoScrambles[etapa] || bancoScrambles['cross'];
+}
+
+/* ==========================================================================
    ⚙️ ENGINE DO MODO A: METRÔNOMO DE TPS AUTOMATIZADO
    ========================================================================== */
 function renderizarModoMetronome() {
@@ -157,7 +482,7 @@ function renderizarModoMetronome() {
     const algPrincipal = caso.algs[0];
     movimentosDecompostos = decomporAlgoritmo(algPrincipal);
     
-    const tempoEstimadoTeorico = (movimentosDecompostos.length / tpsAlvo).toFixed(2);
+    const tempoEstimatedTeorico = (movimentosDecompostos.length / tpsAlvo).toFixed(2);
 
     workspace.innerHTML = `
         <div class="dashboard-widget" style="text-align: center; padding: 20px; width: 100%; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 15px;">
@@ -192,7 +517,7 @@ function renderizarModoMetronome() {
                 </div>
                 <div style="flex: 1; min-width: 140px; text-align: right; border-left: 1px solid rgba(88, 110, 117, 0.2); padding-left: 10px;">
                     <span style="font-size: 11px; color: var(--text-muted); display: block;">METRICA DETALHADA</span>
-                    <strong style="font-size: 13px; color: var(--text-bright); font-family: monospace; display: block; margin-top: 2px;">${movimentosDecompostos.length} giros / <span style="color:var(--success);">${tempoEstimadoTeorico}s</span></strong>
+                    <strong style="font-size: 13px; color: var(--text-bright); font-family: monospace; display: block; margin-top: 2px;">${movimentosDecompostos.length} giros / <span style="color:var(--success);">${tempoEstimatedTeorico}s</span></strong>
                 </div>
             </div>
 
@@ -211,9 +536,8 @@ function renderizarModoMetronome() {
         </div>
     `;
 
-    // Handler para o dropdown de seleção direta de casos
     document.getElementById('select-caso-metronome').addEventListener('change', (e) => {
-        limparLoopsTreinador(); // Limpa áudios pendentes antes de mudar
+        limparLoopsTreinador();
         indexCasoAtual = parseInt(e.target.value);
         renderizarModoMetronome();
     });
@@ -253,7 +577,7 @@ function gerenciarGatilhoMetronome() {
     executarCicloMetronomeEngine();
 }
 
-function executarCicloMetronomeEngine() {
+function ejecutarCicloMetronomeEngine() {
     indexMovimentoMetronome = 0;
     movimentosDecompostos.forEach((_, idx) => {
         const el = document.getElementById(`step-mov-${idx}`);
@@ -267,11 +591,8 @@ function executarCicloMetronomeEngine() {
         if (indexMovimentoMetronome >= movimentosDecompostos.length) {
             clearInterval(metronomeIntervalId);
             metronomeIntervalId = null;
-            
-            // Ativa o gatilho para usar a frequência diferenciada no próximo ciclo
             deVoltaNoLoop = true;
 
-            // Aguarda meio segundo (500ms) de descanso e reinicia o loop automaticamente
             timeoutReiniciarId = setTimeout(() => {
                 timeoutReiniciarId = null;
                 executarCicloMetronomeEngine();
@@ -285,7 +606,7 @@ function executarCicloMetronomeEngine() {
             osc.connect(gainNode);
             gainNode.connect(audioCtx.destination);
             
-            let frequenciaBipe = 750; // Som padrão para o fluxo interno do algoritmo
+            let frequenciaBipe = 750;
             if (indexMovimentoMetronome === 0) {
                 frequenciaBipe = deVoltaNoLoop ? 1600 : 1100;
             }
@@ -484,6 +805,7 @@ async function pararCronometroAntipanic() {
     const caso = filaDeCasosAtiva[indexCasoAtual];
     try {
         await saveToStore('times', {
+            id: 'solve_' + Date.now(),
             time: parseFloat(tempoFinalCalculado.toFixed(2)),
             scramble: `Drill Antipânico: ${caso.name}`,
             date: new Date().toISOString(),
