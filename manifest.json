@@ -6,12 +6,19 @@
       "src": "./imagens/icon.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "./imagens/icon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "./imagens/icon.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     }
   ],
   "start_url": "./index.html",
@@ -19,5 +26,5 @@
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0b0b0c",
-  "theme_color": "#00e5ff"
+  "theme_color": "#0b0b0c"
 }

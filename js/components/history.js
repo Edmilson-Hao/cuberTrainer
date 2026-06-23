@@ -1,11 +1,24 @@
 import { getAllFromStore, saveToStore, deleteFromStore, clearAllDatabase } from '../db.js';
 import { getCurrentSessionSolves } from './timer.js'; 
 
+// ==========================================
+// TRANCA GLOBAL CONTRA REFRESH (ANTI-BUG)
+// ==========================================
+window.addEventListener('submit', function(e) {
+    // Impede absolutamente qualquer formulário de recarregar a página nesta aba
+    if (e.target && (e.target.id === 'btn-p2p-gerar' || e.target.querySelector('#btn-p2p-gerar'))) {
+        e.preventDefault();
+        e.stopPropagation();
+    }
+}, true);
+
 let REAL_SOLVES_STORE = 'times';
 let currentFilter = 'all'; 
 let evolutionChart = null;
 
 let localPeer = null;
+let p2pCodigoAtivoGlobal = null;
+let p2pStatusMensagemGlobal = ""; 
 
 // ==========================================
 // 1. FUNÇÕES AUXILIARES DE BUSCA E CÁLCULO
@@ -39,7 +52,7 @@ function encontrarMelhorAoN(solves, n) {
         if (subGrupo.some(s => s.isDNF)) continue;
         
         const tempos = subGrupo.map(s => s.time).sort((a, b) => a - b);
-        const temposFiltrados = tempos.slice(1, -1);
+        const temposFiltrados = subGrupo.map(s => s.time).sort((a, b) => a - b).slice(1, -1);
         const soma = temposFiltrados.reduce((acc, t) => acc + t, 0);
         const media = soma / temposFiltrados.length;
         if (media < melhorMeda) melhorMeda = media;
@@ -49,41 +62,99 @@ function encontrarMelhorAoN(solves, n) {
 }
 
 // ==========================================
-// 2. SISTEMA DE SINCRONIZAÇÃO P2P E UTILS
+// 2. SISTEMA DE SINCRONIZAÇÃO P2P
 // ==========================================
 async function garantirPeerJS() {
     if (typeof Peer === 'undefined') {
-        console.log("Injetando PeerJS dinamicamente via CDN estável...");
         await new Promise((resolve, reject) => {
             const script = document.createElement('script');
             script.src = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
-            script.onload = () => {
-                console.log("PeerJS carregado e pronto para uso.");
-                resolve();
-            };
-            script.onerror = () => reject(new Error("Falha ao carregar os scripts do PeerJS. Verifique a ligação à internet."));
+            script.onload = resolve;
+            script.onerror = () => reject(new Error("Falha ao carregar o PeerJS."));
             document.head.appendChild(script);
         });
     }
 }
 
-async function conectarComoReceptorP2P(codigoAlvo) {
-    const statusLabel = document.getElementById('p2p-status');
-    const inputCodigo = document.getElementById('p2p-code-input');
+function atualizarApenasHTMLP2P() {
+    const containerP2P = document.getElementById('p2p-interactive-container');
+    if (!containerP2P) return;
 
-    if (statusLabel) statusLabel.innerText = "Verificando dependências de rede...";
+    const btnTexto = p2pCodigoAtivoGlobal ? `🔑 CÓDIGO ATIVO: ${p2pCodigoAtivoGlobal}` : '🔗 Gerar Código de Transmissão Neste Dispositivo';
+    const btnEstilo = p2pCodigoAtivoGlobal 
+        ? 'background: rgba(40, 167, 69, 0.2) !important; border: 1px solid #28a745 !important; color: #fff !important;' 
+        : 'background: rgba(38, 139, 210, 0.12); border: 1px solid var(--accent); color: var(--text-bright);';
+
+    containerP2P.innerHTML = `
+        <div style="display: flex; flex-direction: column; gap: 10px; width:100%;">
+            <button id="btn-p2p-gerar" type="button" onclick="event.preventDefault(); event.stopPropagation(); return false;" style="${btnEstilo} font-size:12px; padding: 10px; cursor: pointer; border-radius:4px; font-weight:bold;">
+                ${btnTexto}
+            </button>
+            
+            <div style="display: flex; gap: 6px; margin-top: 4px; width: 100%; box-sizing: border-box;">
+                <input type="text" 
+                       id="p2p-code-input" 
+                       inputmode="numeric" 
+                       pattern="[0-9]*" 
+                       maxlength="5" 
+                       value="${p2pCodigoAtivoGlobal || ''}"
+                       placeholder="Digite os 5 números..." 
+                       style="flex: 1; padding: 10px; font-size:12px; background: #002b36; border: 1px solid var(--border-color); color: var(--text-bright); border-radius: var(--radius-sm); outline:none; min-width: 0;">
+                
+                <button id="btn-p2p-conectar" type="button" onclick="event.preventDefault(); event.stopPropagation(); return false;" style="font-size:12px; padding: 0 14px; background: var(--success); color: #fff; border:none; white-space: nowrap; cursor: pointer; border-radius:4px; font-weight:bold;">
+                    Sincronizar 📥
+                </button>
+            </div>
+        </div>
+        <div id="p2p-status" style="font-size: 11px; color: var(--text-muted); font-family: monospace; text-align: center; margin-top: 10px; min-height: 14px;">
+            ${p2pStatusMensagemGlobal}
+        </div>
+    `;
+
+    const btnGerar = document.getElementById('btn-p2p-gerar');
+    if (btnGerar) {
+        btnGerar.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            await gerarCodigoParaTransmissaoP2P();
+        });
+    }
+
+    const btnConectar = document.getElementById('btn-p2p-conectar');
+    if (btnConectar) {
+        btnConectar.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const inputCodigo = document.getElementById('p2p-code-input');
+            if (inputCodigo && inputCodigo.value.trim() !== "") {
+                await conectarComoReceptorP2P(inputCodigo.value.trim());
+            }
+        });
+    }
+}
+
+async function conectarComoReceptorP2P(codigoAlvo) {
+    p2pStatusMensagemGlobal = "Verificando dependências de rede...";
+    atualizarApenasHTMLP2P();
 
     try {
         await garantirPeerJS();
     } catch (loaderError) {
-        console.error(loaderError);
-        if (statusLabel) statusLabel.innerHTML = `<span style='color: var(--danger);'>❌ Erro: ${loaderError.message}</span>`;
+        p2pStatusMensagemGlobal = `<span style='color: var(--danger);'>❌ Erro: ${loaderError.message}</span>`;
+        atualizarApenasHTMLP2P();
         return;
     }
 
-    if (statusLabel) statusLabel.innerText = "Localizando par na rede...";
+    p2pStatusMensagemGlobal = "Localizando par na rede...";
+    atualizarApenasHTMLP2P();
 
-    encerrarConexaoP2P();
+    if (localPeer) {
+        try {
+            localPeer.off('open'); localPeer.off('error'); localPeer.off('connection'); localPeer.off('close');
+            localPeer.disconnect(); localPeer.destroy();
+        } catch(e){}
+        localPeer = null;
+    }
 
     localPeer = new Peer();
 
@@ -91,164 +162,152 @@ async function conectarComoReceptorP2P(codigoAlvo) {
         const conn = localPeer.connect(codigoAlvo);
 
         conn.on('open', () => {
-            if (statusLabel) statusLabel.innerText = "Conectado! A aguardar dados...";
+            p2pStatusMensagemGlobal = "<span style='color: var(--accent); font-weight:bold;'>● Conectado! Baixando dados...</span>";
+            atualizarApenasHTMLP2P();
         });
 
         conn.on('data', async (data) => {
-            if (statusLabel) statusLabel.innerText = "A mesclar histórico e progresso de flashcards...";
+            p2pStatusMensagemGlobal = "A mesclar histórico e progresso...";
+            atualizarApenasHTMLP2P();
             
             try {
                 const db = await import('../db.js');
-                
                 if (data.solves && Array.isArray(data.solves)) {
                     for (const solve of data.solves) {
                         await db.saveToStore(REAL_SOLVES_STORE, solve);
                     }
                 }
-                
                 if (data.cases && Array.isArray(data.cases)) {
                     for (const caseState of data.cases) {
                         await db.saveToStore('casesState', caseState);
                     }
                 }
 
-                if (statusLabel) statusLabel.innerHTML = "<span style='color: var(--success);'>✅ Dispositivo 100% Sincronizado!</span>";
-                if (inputCodigo) inputCodigo.value = "";
+                p2pStatusMensagemGlobal = "<span style='color: var(--success); font-weight:bold;'>✅ Dispositivo Sincronizado!</span>";
+                p2pCodigoAtivoGlobal = null;
+                atualizarApenasHTMLP2P();
+                
+                setTimeout(() => {
+                    p2pStatusMensagemGlobal = "";
+                    if (localPeer) { try { localPeer.destroy(); } catch(e){} localPeer = null; }
+                    initHistoryScreen();
+                }, 1500);
                 
             } catch (error) {
-                console.error(error);
-                if (statusLabel) statusLabel.innerText = "Falha ao gravar dados recebidos.";
-            } finally {
-                setTimeout(() => {
-                    encerrarConexaoP2P();
-                }, 3500);
+                p2pStatusMensagemGlobal = "Falha ao gravar dados recebidos.";
+                atualizarApenasHTMLP2P();
             }
         });
 
-        conn.on('error', (err) => {
-            console.error(err);
-            if (statusLabel) statusLabel.innerText = "Erro na conexão com o par.";
+        conn.on('error', () => {
+            p2pStatusMensagemGlobal = "<span style='color:var(--danger);'>Erro na conexão com o par.</span>";
+            atualizarApenasHTMLP2P();
         });
     });
 
-    localPeer.on('error', (err) => {
-        console.error(err);
-        if (statusLabel) statusLabel.innerText = "Não foi possível conectar. Verifique o código.";
+    localPeer.on('error', () => {
+        p2pStatusMensagemGlobal = "<span style='color:var(--danger);'>Não foi possível conectar. Verifique o código.</span>";
+        atualizarApenasHTMLP2P();
     });
 }
 
 async function gerarCodigoParaTransmissaoP2P() {
-    const statusLabel = document.getElementById('p2p-status');
-    if (statusLabel) statusLabel.innerText = "Preparando servidor local de sincronização...";
-
+    p2pStatusMensagemGlobal = "Preparando servidor local...";
+    atualizarApenasHTMLP2P();
+    
     try {
         await garantirPeerJS();
     } catch (loaderError) {
-        console.error(loaderError);
-        if (statusLabel) statusLabel.innerHTML = `<span style='color: var(--danger);'>❌ Erro: ${loaderError.message}</span>`;
+        p2pStatusMensagemGlobal = `<span style='color: var(--danger);'>❌ Erro: ${loaderError.message}</span>`;
+        atualizarApenasHTMLP2P();
         return;
     }
 
-    encerrarConexaoP2P();
+    if (localPeer) {
+        try {
+            localPeer.off('open'); localPeer.off('error'); localPeer.off('connection'); localPeer.off('close');
+            localPeer.disconnect(); localPeer.destroy();
+        } catch(e){}
+        localPeer = null;
+    }
 
     const codigoNumericoCurto = Math.floor(10000 + Math.random() * 90000).toString();
-    localPeer = new Peer(codigoNumericoCurto);
+    p2pCodigoAtivoGlobal = codigoNumericoCurto;
 
-    localPeer.on('open', (id) => {
-        if (statusLabel) {
-            statusLabel.innerHTML = `
-                <div style="background: rgba(38,139,210,0.1); border: 1px solid var(--accent); padding: 12px; border-radius: 6px; margin-top: 10px;">
-                    <span style="display:block; font-size:11px; color: var(--accent); font-weight:bold; text-transform:uppercase;">Código Deste Dispositivo:</span>
-                    <strong style="font-size: 26px; color: var(--success); font-family: monospace; letter-spacing: 2px;">${id}</strong>
-                    <p style="margin: 6px 0 0 0; font-size:11px; color: var(--text-muted);">Insira estes 5 números no outro dispositivo para enviar o seu histórico.</p>
-                </div>
-            `;
-        }
-    });
+    p2pStatusMensagemGlobal = `
+        <div style="background: rgba(40,167,69,0.1); border: 1px solid #28a745; padding: 12px; border-radius: 6px; margin-top: 10px; text-align: center;">
+            <span style="display:block; font-size:12px; color: #a6e3a1; font-weight:bold; text-transform:uppercase;">● Canal Ativo para Pareamento</span>
+            <strong style="font-size: 28px; color: #a6e3a1; font-family: monospace; letter-spacing: 3px; display:block; margin: 5px 0;">${codigoNumericoCurto}</strong>
+            <p style="margin: 0; font-size:11px; color: var(--text-muted);">Digite estes 5 números no outro dispositivo e clique em Sincronizar.</p>
+        </div>
+    `;
 
-    localPeer.on('connection', (conn) => {
-        conn.on('open', async () => {
-            if (statusLabel) statusLabel.innerText = "Par conectado! Empacotando banco de dados...";
+    atualizarApenasHTMLP2P();
 
-            try {
-                const todosOsSolves = await getAllFromStore(REAL_SOLVES_STORE) || [];
-                const todosOsFlashcards = await getAllFromStore('casesState') || [];
+    try {
+        localPeer = new Peer(codigoNumericoCurto);
 
-                conn.send({
-                    solves: todosOsSolves,
-                    cases: todosOsFlashcards
-                });
+        localPeer.on('connection', (conn) => {
+            conn.on('open', async () => {
+                p2pStatusMensagemGlobal = "<span style='color: var(--accent);'>Par conectado! Transmitindo...</span>";
+                atualizarApenasHTMLP2P();
 
-                if (statusLabel) statusLabel.innerHTML = "<span style='color: var(--success);'>🚀 Dados transmitidos com sucesso! Sincronizando...</span>";
-            } catch (err) {
-                console.error(err);
-                if (statusLabel) statusLabel.innerText = "Erro ao ler dados locais para envio.";
+                try {
+                    const todosOsSolves = await getAllFromStore(REAL_SOLVES_STORE) || [];
+                    const todosOsFlashcards = await getAllFromStore('casesState') || [];
+
+                    conn.send({ solves: todosOsSolves, cases: todosOsFlashcards });
+
+                    p2pStatusMensagemGlobal = "<span style='color: var(--success); font-weight:bold;'>🚀 Dados transmitidos com sucesso!</span>";
+                    p2pCodigoAtivoGlobal = null;
+                    atualizarApenasHTMLP2P();
+                    
+                    setTimeout(() => { encerrarConexaoP2P(); }, 2000);
+                } catch (err) {
+                    p2pStatusMensagemGlobal = "Erro ao verificar dados locais.";
+                    atualizarApenasHTMLP2P();
+                }
+            });
+        });
+
+        localPeer.on('error', (err) => {
+            if (err.type === 'unavailable-id') {
+                p2pStatusMensagemGlobal = "Código em uso. Clique novamente para gerar outro.";
+                p2pCodigoAtivoGlobal = null;
+                atualizarApenasHTMLP2P();
             }
         });
-    });
 
-    localPeer.on('error', (err) => {
-        console.error(err);
-        if (err.type === 'unavailable-id') {
-            if (statusLabel) statusLabel.innerText = "Código em uso. Clique novamente para gerar outro.";
-        } else {
-            if (statusLabel) statusLabel.innerText = "Erro ao abrir canal de transmissão.";
-        }
-    });
+    } catch (e) {
+        p2pStatusMensagemGlobal = "Erro ao abrir canal de transmissão.";
+        atualizarApenasHTMLP2P();
+    }
 }
 
 function encerrarConexaoP2P() {
     if (localPeer) {
         try {
-            localPeer.disconnect();
-            localPeer.destroy();
-        } catch (e) {
-            console.error("Erro ao destruir peer:", e);
-        }
+            localPeer.off('open'); localPeer.off('error'); localPeer.off('connection'); localPeer.off('close');
+            localPeer.disconnect(); localPeer.destroy();
+        } catch (e) {}
         localPeer = null;
     }
-    
-    const statusLabel = document.getElementById('p2p-status');
-    if (statusLabel && !statusLabel.innerHTML.includes("✅")) {
-        statusLabel.innerText = "Sincronização finalizada.";
-    }
-    
-    setTimeout(() => {
-        import('./dashboard.js').then(dash => {
-            if (dash && typeof dash.renderDashboard === 'function') {
-                dash.renderDashboard();
-            }
-        });
-        if (typeof initHistoryScreen === 'function') {
-            initHistoryScreen();
-        }
-    }, 500);
+    p2pCodigoAtivoGlobal = null;
+    p2pStatusMensagemGlobal = "";
+    initHistoryScreen();
 }
 
 async function forceClearSystemCacheAndReload() {
-    const statusLabel = document.getElementById('p2p-status');
-    if (statusLabel) statusLabel.innerText = "A procurar novas atualizações de código...";
-
     try {
         if ('caches' in window && 'serviceWorker' in navigator) {
             const cacheNames = await caches.keys();
             await Promise.all(cacheNames.map(cacheName => caches.delete(cacheName)));
-
             const registrations = await navigator.serviceWorker.getRegistrations();
-            for (const registration of registrations) {
-                await registration.unregister();
-            }
+            for (const registration of registrations) { await registration.unregister(); }
         }
-
-        if (statusLabel) statusLabel.innerHTML = "<span style='color: var(--success);'>✅ Sistema atualizado! A recarregar...</span>";
-
-        setTimeout(() => {
-            window.location.reload(true);
-        }, 1000);
-
+        setTimeout(() => { window.location.reload(true); }, 400);
     } catch (err) {
-        console.error("Erro ao atualizar arquivos:", err);
-        alert("Não foi possível atualizar automaticamente.");
+        window.location.reload();
     }
 }
 
@@ -259,13 +318,7 @@ function renderEvolutionChart(solves) {
     const ctx = document.getElementById('historyEvolutionChart');
     if (!ctx || typeof Chart === 'undefined') return;
 
-    if (evolutionChart) {
-        try {
-            evolutionChart.destroy();
-        } catch (e) {
-            console.warn("Erro ao destruir gráfico antigo:", e);
-        }
-    }
+    if (evolutionChart) { try { evolutionChart.destroy(); } catch (e) {} }
 
     const validSolves = [...solves]
         .filter(s => s && !s.isDNF)
@@ -300,7 +353,7 @@ function renderEvolutionChart(solves) {
                     backgroundColor: 'rgba(38, 139, 210, 0.06)',
                     fill: true,
                     tension: 0.1,
-                    pointRadius: dataDisplay.length > 50 ? 0 : 2,
+                    pointRadius: 2,
                     pointBackgroundColor: '#268bd2'
                 }]
             },
@@ -314,9 +367,7 @@ function renderEvolutionChart(solves) {
                 }
             }
         });
-    } catch (chartError) {
-        console.error("Falha ao inicializar Chart.js:", chartError);
-    }
+    } catch (chartError) {}
 }
 
 // ==========================================
@@ -328,12 +379,8 @@ export async function initHistoryScreen() {
 
     const allSolves = await discoverAndFetchSolves();
 
-    // CORRIGIDO: Isola o 3x3 Completo das sub-etapas de metas de treino
     const filteredSolves = allSolves.filter(s => {
-        if (currentFilter === 'all') {
-            // Se for 3x3 completo, ignora solves que tenham propriedades de etapas específicas
-            return !s.step || s.step === 'all' || s.step === ''; 
-        }
+        if (currentFilter === 'all') return !s.step || s.step === 'all' || s.step === ''; 
         return s.step === currentFilter;
     });
 
@@ -367,28 +414,10 @@ export async function initHistoryScreen() {
 
             <div class="averages-card" style="background: var(--bg-card); padding: 15px; border-radius: var(--radius-md); border: 1px solid rgba(38,139,210,0.15);">
                 <h3 style="margin: 0 0 6px 0; font-size: 14px; color: var(--accent);">🌐 Sincronização Cross-Device (P2P Direto)</h3>
-                
-                <div style="display: flex; flex-direction: column; gap: 10px; width:100%;">
-                    <button id="btn-p2p-gerar" class="btn-primary" style="background: rgba(38,139,210,0.12); border: 1px solid var(--accent); color: var(--text-bright); font-size:12px; padding: 10px;">
-                        🔗 Gerar Código de Transmissão Neste Dispositivo
-                    </button>
-                    
-                    <div style="display: flex; gap: 6px; margin-top: 4px; width: 100%; box-sizing: border-box;">
-                        <input type="text" 
-                               id="p2p-code-input" 
-                               inputmode="numeric" 
-                               pattern="[0-9]*" 
-                               maxlength="5" 
-                               placeholder="Digite os 5 números..." 
-                               style="flex: 1; padding: 10px; font-size:12px; background: #002b36; border: 1px solid var(--border-color); color: var(--text-bright); border-radius: var(--radius-sm); outline:none; min-width: 0;">
-                        
-                        <button id="btn-p2p-conectar" class="btn-primary" style="font-size:12px; padding: 0 14px; background: var(--success); white-space: nowrap;">
-                            Sincronizar 📥
-                        </button>
-                    </div>
-                </div>
-                <div id="p2p-status" style="font-size: 11px; color: var(--text-muted); font-family: monospace; text-align: center; margin-top: 10px; min-height: 14px;"></div>
+                <div id="p2p-interactive-container"></div>
             </div>
+
+            <div id="weakness-panel-container" style="display: none; margin-bottom: 5px;"></div>
 
             <div class="stats-summary-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
                 <div class="stat-box-mini" style="background: var(--bg-card); padding: 12px; border-radius: var(--radius-sm); border: 1px solid rgba(255,255,255,0.03); text-align: center;">
@@ -451,30 +480,13 @@ export async function initHistoryScreen() {
         </div>
     `;
 
-    // EVENTOS
-    document.getElementById('btn-p2p-gerar').addEventListener('click', async () => {
-        await gerarCodigoParaTransmissaoP2P();
-    });
-
-    document.getElementById('btn-p2p-conectar').addEventListener('click', async () => {
-        const inputCodigo = document.getElementById('p2p-code-input');
-        if (inputCodigo && inputCodigo.value.trim() !== "") {
-            await conectarComoReceptorP2P(inputCodigo.value.trim());
-        } else {
-            const statusLabel = document.getElementById('p2p-status');
-            if (statusLabel) {
-                statusLabel.innerHTML = "<span style='color:var(--warning);'>Por favor, digite um código válido.</span>";
-            }
-        }
-    });
+    atualizarApenasHTMLP2P();
 
     document.getElementById('btn-force-update-app').addEventListener('click', forceClearSystemCacheAndReload);
 
     document.getElementById('btn-wipe-database').addEventListener('click', async () => {
-        const confirmar = confirm("Tem a certeza absoluta de que deseja limpar a sua base de dados? Esta ação não pode ser desfeita!");
-        if (confirmar) {
+        if (confirm("Tem a certeza absoluta de que deseja limpar a sua base de dados?")) {
             await clearAllDatabase();
-            alert("Base de dados limpa com sucesso.");
             window.location.reload();
         }
     });
@@ -497,39 +509,31 @@ function calculateAndRenderWeaknesses(allSolves) {
     const container = document.getElementById('weakness-panel-container');
     if (!container) return;
 
-    // CORRIGIDO: Se for "all", NÃO mata a função. Deixa passar para renderizar o gráfico doughnut de estimativas.
     if (currentFilter === 'all') {
-        container.style.display = 'block'; 
-        // Nota: A renderização do gráfico de pizza Chart.js deve ser acionada aqui ou logo em seguida no escopo de 'all'
-        return; 
-    }
-
-    // Fluxo normal para abas de sub-etapas (F2L, OLL, PLL) para mapear piores casos executados
-    const solvesEtapa = allSolves.filter(s => s.step === currentFilter && s.caseName && !s.isDNF);
-    
-    if (solvesEtapa.length === 0) {
         container.innerHTML = `
-            <div style="background: rgba(2,6,23,0.3); border: 1px dashed #1e293b; padding:12px; border-radius:6px; font-size:11px; color: var(--text-muted); text-align:center;">
-                Gere resoluções específicas de <strong>${currentFilter.toUpperCase()}</strong> no cronômetro para ranquear seus piores casos.
+            <div class="chart-card" style="background: var(--bg-card); padding: 15px; border-radius: var(--radius-md); border: 1px solid rgba(255,255,255,0.02); margin-bottom: 5px;">
+                <h3 style="margin: 0 0 12px 0; font-size: 14px; color: var(--text-bright);">📊 Distribuição Teórica das Etapas (CFOP)</h3>
+                <div style="position: relative; width: 100%; height: 160px;">
+                    <canvas id="historyDistributionChartCanvas"></canvas>
+                </div>
             </div>
         `;
         container.style.display = 'block';
-        return;
+        setTimeout(() => { renderDistributionChart('historyDistributionChartCanvas', allSolves); }, 500);
+        return; 
     }
+
+    const solvesEtapa = allSolves.filter(s => s.step === currentFilter && s.caseName && !s.isDNF);
+    if (solvesEtapa.length === 0) { container.style.display = 'none'; return; }
 
     const mapaCasos = {};
     solvesEtapa.forEach(s => {
-        if (!mapaCasos[s.caseName]) {
-            mapaCasos[s.caseName] = { nome: s.caseName, soma: 0, qtd: 0 };
-        }
+        if (!mapaCasos[s.caseName]) mapaCasos[s.caseName] = { nome: s.caseName, soma: 0, qtd: 0 };
         mapaCasos[s.caseName].soma += s.time;
         mapaCasos[s.caseName].qtd++;
     });
 
-    const listaAnalise = Object.values(mapaCasos).map(c => {
-        return { nome: c.nome, media: c.soma / c.qtd, totalSolves: c.qtd };
-    });
-
+    const listaAnalise = Object.values(mapaCasos).map(c => ({ nome: c.nome, media: c.soma / c.qtd, totalSolves: c.qtd }));
     listaAnalise.sort((a, b) => b.media - a.media);
     const pioresTres = listaAnalise.slice(0, 3);
 
@@ -549,10 +553,8 @@ function calculateAndRenderWeaknesses(allSolves) {
 
     container.innerHTML = `
         <div style="background: rgba(255, 23, 68, 0.03); border: 1px solid rgba(255, 23, 68, 0.2); border-radius: var(--radius-sm); padding:12px; box-sizing:border-box;">
-            <h4 style="font-size: 11px; font-weight: 800; color: var(--danger); text-transform: uppercase; margin-bottom: 10px; letter-spacing: 0.5px;">🚨 Seus 3 Piores Casos em ${currentFilter.toUpperCase()} (Treine Mais!)</h4>
-            <div style="display:flex; flex-direction:column; gap:6px;">
-                ${itemsHtml}
-            </div>
+            <h4 style="font-size: 11px; font-weight: 800; color: var(--danger); text-transform: uppercase; margin-bottom: 10px; letter-spacing: 0.5px;">🚨 Seus 3 Piores Casos em ${currentFilter.toUpperCase()}</h4>
+            <div style="display:flex; flex-direction:column; gap:6px;">${itemsHtml}</div>
         </div>
     `;
     container.style.display = 'block';
@@ -575,16 +577,14 @@ function renderTop12Singles(filteredSolves, rawSolves) {
     top12.forEach((s, idx) => {
         const numeroAbsoluto = rawCronologico.findIndex(x => x.id === s.id) + 1;
         const medalha = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${idx + 1}`;
-
         html += `
-            <div style="background: rgba(2, 6, 23, 0.5); border: 1px solid #1e293b; border-radius: var(--radius-sm); padding: 5px 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0;" title="${s.caseName || s.scramble || ''}">
+            <div style="background: rgba(2, 6, 23, 0.5); border: 1px solid #1e293b; border-radius: var(--radius-sm); padding: 5px 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0;">
                 <span style="font-size: 9px; font-weight: 700; color: var(--text-muted);">${medalha}</span>
                 <strong style="font-size: 11px; color: var(--text-main); font-family: monospace; white-space: nowrap;">${s.time.toFixed(2)}s</strong>
                 <span style="font-size: 8px; color: var(--accent); font-family: monospace;">${s.caseName ? s.caseName.split(' ')[0] : `#${numeroAbsoluto}`}</span>
             </div>
         `;
     });
-
     topContainer.innerHTML = html;
 }
 
@@ -597,11 +597,8 @@ function renderHistoryList(filteredSolves, rawSolves) {
         return;
     }
 
-    // Ordenações iniciais estruturadas
     const listaExibicao = [...filteredSolves].sort((a, b) => new Date(b.date) - new Date(a.date));
     const rawCronologico = [...rawSolves].sort((a, b) => new Date(a.date) - new Date(b.date));
-
-    // OTMIZAÇÃO ANDROID: Corta a renderização pesada no DOM para as 50 mais recentes
     const listaOtimizadaCelular = listaExibicao.slice(0, 50);
 
     let html = '';
@@ -615,7 +612,7 @@ function renderHistoryList(filteredSolves, rawSolves) {
 
         const badgeEtapa = s.caseName 
             ? `<span style="background: rgba(38, 139, 210, 0.1); color: var(--accent); border: 1px solid rgba(38, 139, 210, 0.2); font-size: 9px; padding: 1px 5px; border-radius: 4px; font-weight: 700;">${s.caseName}</span>`
-            : s.step && s.step !== 'all' ? `<span style="background: ${s.step === 'cross' ? 'rgba(38,139,210,0.2)' : '#1e293b'}; color: var(--accent); font-size: 9px; padding: 1px 4px; border-radius: 4px; font-weight: 600; text-transform: uppercase;">${s.step}</span>` : '';
+            : s.step && s.step !== 'all' ? `<span style="background: #1e293b; color: var(--accent); font-size: 9px; padding: 1px 4px; border-radius: 4px; font-weight: 600; text-transform: uppercase;">${s.step}</span>` : '';
 
         html += `
             <div class="history-item" style="background: rgba(2, 6, 23, 0.3); border: 1px solid #1e293b; border-radius: var(--radius-sm); padding: 10px; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; box-sizing: border-box; width: 100%;">
@@ -625,23 +622,19 @@ function renderHistoryList(filteredSolves, rawSolves) {
                     </span>
                     <div style="display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 3px;">
                         <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-                            <strong style="font-size: 13px; color: ${s.isDNF ? 'var(--danger)' : 'var(--text-main)'}; font-family: monospace; flex-shrink: 0;">
+                            <strong style="font-size: 13px; color: ${s.isDNF ? 'var(--danger)' : 'var(--text-main)'}; font-family: monospace;">
                                 ${displayTime}
                             </strong>
                             ${badgeEtapa}
                         </div>
-                        <span style="font-size: 10px; color: var(--text-muted); font-family: monospace; white-space: normal; word-break: break-word; width: 100%; display: block;">
+                        <span style="font-size: 10px; color: var(--text-muted); font-family: monospace; word-break: break-word; width: 100%; display: block;">
                             ${s.scramble || 'Sem scramble'}
                         </span>
                     </div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0; margin-top: 2px;">
-                    <span style="font-size: 10px; color: var(--text-muted); font-weight: 500; white-space: nowrap;">
-                        ${dataFormatada}
-                    </span>
-                    <button class="btn-delete-solve" data-id="${s.id}" style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 2px; font-size: 12px; flex-shrink: 0;">
-                        🗑️
-                    </button>
+                    <span style="font-size: 10px; color: var(--text-muted); font-weight: 500;">${dataFormatada}</span>
+                    <button class="btn-delete-solve" data-id="${s.id}" style="background: transparent; border: none; color: var(--text-muted); cursor: pointer; padding: 2px; font-size: 12px;">🗑️</button>
                 </div>
             </div>
         `;
@@ -649,13 +642,11 @@ function renderHistoryList(filteredSolves, rawSolves) {
 
     listContainer.innerHTML = html;
 
-    // Listeners de deleção mantidos intactos e seguros
     listContainer.querySelectorAll('.btn-delete-solve').forEach(btn => {
         btn.addEventListener('click', async (e) => {
             e.stopPropagation();
             const rawId = btn.getAttribute('data-id');
             const idValido = rawId.startsWith('workout_') ? rawId : Number(rawId);
-
             if (confirm("Apagar esta resolução das metas?")) {
                 await deleteFromStore(REAL_SOLVES_STORE, idValido);
                 initHistoryScreen();
@@ -665,19 +656,15 @@ function renderHistoryList(filteredSolves, rawSolves) {
     });
 }
 
-export async function renderDistributionChart(canvasId) {
+export async function renderDistributionChart(canvasId, allSolves) {
     const ctx = document.getElementById(canvasId);
     if (!ctx || typeof Chart === 'undefined') return;
-
-    const allSolves = await discoverAndFetchSolves();
 
     const pegarMediaMovel = (etapaNome) => {
         const filtrados = allSolves.filter(s => s.step === etapaNome && !s.isDNF);
         if (filtrados.length === 0) return 0;
-        
         const ultimosTreinos = filtrados.slice(-20);
-        const soma = ultimosTreinos.reduce((acc, s) => acc + s.time, 0);
-        return soma / ultimosTreinos.length;
+        return ultimosTreinos.reduce((acc, s) => acc + s.time, 0) / ultimosTreinos.length;
     };
 
     const mediaCruz = pegarMediaMovel('cross');
@@ -686,16 +673,8 @@ export async function renderDistributionChart(canvasId) {
     const mediaPLL  = pegarMediaMovel('pll');
 
     let dadosGrafico = [mediaCruz, mediaF2L, mediaOLL, mediaPLL];
-    let usarPadrao = false;
 
-    if (mediaCruz === 0 && mediaF2L === 0 && mediaOLL === 0 && mediaPLL === 0) {
-        dadosGrafico = [3.00, 10.00, 2.50, 3.50];
-        usarPadrao = true;
-    }
-
-    if (window.myDistributionChartInstance) {
-        window.myDistributionChartInstance.destroy();
-    }
+    if (window.myDistributionChartInstance) { window.myDistributionChartInstance.destroy(); }
 
     window.myDistributionChartInstance = new Chart(ctx, {
         type: 'doughnut',
@@ -703,12 +682,7 @@ export async function renderDistributionChart(canvasId) {
             labels: ['Cruz', 'F2L (4 Passos)', 'OLL', 'PLL'],
             datasets: [{
                 data: dadosGrafico.map(v => parseFloat(v.toFixed(2))),
-                backgroundColor: [
-                    '#268bd2', 
-                    '#28a745', 
-                    '#b58900', 
-                    '#2aa198'  
-                ],
+                backgroundColor: ['#268bd2', '#28a745', '#b58900', '#2aa198'],
                 borderWidth: 1,
                 borderColor: '#002b36'
             }]
@@ -717,22 +691,7 @@ export async function renderDistributionChart(canvasId) {
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-                legend: {
-                    position: 'bottom',
-                    labels: {
-                        color: '#93a1a1',
-                        font: { size: 11, family: 'monospace' }
-                    }
-                },
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            let label = context.label || '';
-                            let valor = context.raw || 0;
-                            return ` ${label}: ${valor}s ${usarPadrao ? '(Exemplo)' : ''}`;
-                        }
-                    }
-                }
+                legend: { position: 'bottom', labels: { color: '#93a1a1', font: { size: 11, family: 'monospace' } } }
             },
             cutout: '70%'
         }
