@@ -35,30 +35,46 @@ async function discoverAndFetchSolves() {
 function calcularAoN(solves, n) {
     if (solves.length < n) return '-';
     const recentes = solves.slice(-n);
-    if (recentes.some(s => s.isDNF)) return 'DNF';
-    
-    const tempos = recentes.map(s => s.time).sort((a, b) => a - b);
-    const temposFiltrados = tempos.slice(1, -1); 
+    const dnfCount = recentes.filter(s => s.isDNF).length;
+
+    // Regra WCA: 1 DNF é permitido (conta como pior tempo, descartado no corte).
+    // 2 ou mais DNFs no grupo → resultado DNF.
+    if (dnfCount >= 2) return 'DNF';
+
+    // Ordena: DNFs vão para o fim (valor Infinity)
+    const tempos = recentes
+        .map(s => s.isDNF ? Infinity : s.time)
+        .sort((a, b) => a - b);
+
+    // Corta o melhor e o pior (o DNF, se houver, já está no fim como Infinity)
+    const temposFiltrados = tempos.slice(1, -1);
     const soma = temposFiltrados.reduce((acc, t) => acc + t, 0);
     return (soma / temposFiltrados.length).toFixed(2) + 's';
 }
 
 function encontrarMelhorAoN(solves, n) {
     if (solves.length < n) return '-';
-    let melhorMeda = Infinity;
+    let melhorMedia = Infinity;
 
     for (let i = 0; i <= solves.length - n; i++) {
         const subGrupo = solves.slice(i, i + n);
-        if (subGrupo.some(s => s.isDNF)) continue;
-        
-        const tempos = subGrupo.map(s => s.time).sort((a, b) => a - b);
-        const temposFiltrados = subGrupo.map(s => s.time).sort((a, b) => a - b).slice(1, -1);
+        const dnfCount = subGrupo.filter(s => s.isDNF).length;
+
+        // Regra WCA: 2 ou mais DNFs no grupo → esse grupo é DNF, pula
+        if (dnfCount >= 2) continue;
+
+        // 1 DNF é tratado como Infinity (pior tempo, descartado no corte)
+        const tempos = subGrupo
+            .map(s => s.isDNF ? Infinity : s.time)
+            .sort((a, b) => a - b);
+
+        const temposFiltrados = tempos.slice(1, -1);
         const soma = temposFiltrados.reduce((acc, t) => acc + t, 0);
         const media = soma / temposFiltrados.length;
-        if (media < melhorMeda) melhorMeda = media;
+        if (media < melhorMedia) melhorMedia = media;
     }
 
-    return melhorMeda === Infinity ? 'DNF' : melhorMeda.toFixed(2) + 's';
+    return melhorMedia === Infinity ? 'DNF' : melhorMedia.toFixed(2) + 's';
 }
 
 // ==========================================

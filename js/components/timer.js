@@ -380,7 +380,12 @@ async function updateLiveAverages() {
     const panel = document.getElementById('live-averages');
     if (!panel) return;
 
-    const totalContagem = allSolves.length;
+    // Filtra apenas solves do cubo completo 3x3 (step === 'all').
+    // Treinos de etapa isolada (cross, f2l, oll, pll) e drills anti-pânico
+    // têm step diferente de 'all' e NÃO devem entrar nas médias do cronômetro.
+    const fullSolves = allSolves.filter(s => !s.step || s.step === 'all' || s.step === '');
+
+    const totalContagem = fullSolves.length;
 
     if (totalContagem === 0) {
         panel.innerHTML = `
@@ -395,8 +400,8 @@ async function updateLiveAverages() {
         return;
     }
 
-    const validTimes = allSolves.filter(s => !s.isDNF).map(s => s.time);
-    const lastSolve = allSolves[allSolves.length - 1];
+    const validTimes = fullSolves.filter(s => !s.isDNF).map(s => s.time);
+    const lastSolve = fullSolves[fullSolves.length - 1];
     
     // Função helper para calcular a média WCA cortando o melhor e o pior tempo
     const calcAo = (timesArr, n) => {

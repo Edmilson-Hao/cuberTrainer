@@ -204,11 +204,15 @@ async function renderizarModoWorkout() {
 
     // Busca os tempos históricos direto da store para calcular o progresso das missões
     const todosOsTempos = await getAllFromStore('times') || [];
-    
-    const countCross = todosOsTempos.filter(s => s.step === 'cross').length;
-    const countF2L = todosOsTempos.filter(s => s.step === 'f2l').length;
-    const countOLL = todosOsTempos.filter(s => s.step === 'oll').length;
-    const countPLL = todosOsTempos.filter(s => s.step === 'pll').length;
+
+    // Filtra apenas os solves do dia de hoje para renovação diária automática
+    const hoje = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
+    const solvesHoje = todosOsTempos.filter(s => s.date && s.date.slice(0, 10) === hoje);
+
+    const countCross = solvesHoje.filter(s => s.step === 'cross').length;
+    const countF2L   = solvesHoje.filter(s => s.step === 'f2l').length;
+    const countOLL   = solvesHoje.filter(s => s.step === 'oll').length;
+    const countPLL   = solvesHoje.filter(s => s.step === 'pll').length;
 
     const pctCross = Math.min((countCross / 10) * 100, 100);
     const pctF2L = Math.min((countF2L / 10) * 100, 100);
@@ -383,7 +387,7 @@ async function renderizarModoWorkout() {
 
     // Renderiza os últimos 3 tempos salvos no painel inferior
     const miniPanel = document.getElementById('workout-mini-panel');
-    const filtrados = todosOsTempos.filter(s => s.step === currentWorkoutStep).slice(-3).map(s => s.time.toFixed(2) + 's');
+    const filtrados = solvesHoje.filter(s => s.step === currentWorkoutStep).slice(-3).map(s => s.time.toFixed(2) + 's');
     if (filtrados.length > 0) miniPanel.innerHTML = filtrados.join(' <span style="color:var(--text-muted)">|</span> ');
 
     // Limpa referências antigas para evitar a duplicação na troca de abas
@@ -461,14 +465,92 @@ async function salvarTempoDeMetaNoBanco(tempo) {
 // Altere o topo da sua função initTrainerScreen para escutar o espaço globalmente se estiver no modo workout:
 
 function gerarScramblePorEtapa(etapa) {
-    // Retorna embaralhamentos focados em isolar cada step do CFOP
-    const bancoScrambles = {
-        cross: "D R2 U2 B2 U2 F2 D' L2 B2 F2 R2 B' R2 U B2 F' R F' L' D2",
-        f2l: "U R U' R' U' L' U L F2 R2 U' R2 U R2 F2",
-        oll: "R U2 R2 F R F' U2 R' F R F'",
-        pll: "M2 U M2 U2 M2 U M2"
-    };
-    return bancoScrambles[etapa] || bancoScrambles['cross'];
+    // -----------------------------------------------------------------
+    // Scrambles corretos por etapa CFOP
+    //
+    // Cruz  : scramble WCA completo (20 movimentos, sem repetir eixo)
+    // F2L   : scramble WCA completo - o atleta resolve a Cruz e treina
+    //         os 4 slots. Usar scramble completo é o padrão mundial.
+    // OLL   : pega um algoritmo OLL aleatório do banco e inverte.
+    //         Resultado: cubo com Cruz + F2L prontos, apenas OLL pendente.
+    // PLL   : pega um algoritmo PLL aleatório e inverte.
+    //         Resultado: cubo com Cruz + F2L + OLL prontos, apenas PLL pendente.
+    // -----------------------------------------------------------------
+
+    // --- Gerador WCA para Cruz e F2L ---
+    if (etapa === 'cross' || etapa === 'f2l') {
+        const faces  = ['U', 'D', 'R', 'L', 'F', 'B'];
+        // Faces opostas - não pode repetir a mesma face NEM a oposta consecutivamente
+        const opostas = { U:'D', D:'U', R:'L', L:'R', F:'B', B:'F' };
+        const mods   = ['', "'", '2'];
+        const movs   = [];
+        let ultimaFace = '';
+        for (let i = 0; i < 20; i++) {
+            let face;
+            do { face = faces[Math.floor(Math.random() * faces.length)]; }
+            while (face === ultimaFace || face === opostas[ultimaFace]);
+            ultimaFace = face;
+            movs.push(face + mods[Math.floor(Math.random() * mods.length)]);
+        }
+        return movs.join(' ');
+    }
+
+    // --- OLL: inverte um caso OLL aleatório do banco ---
+    if (etapa === 'oll') {
+        const casosOLL = (typeof cuberData !== 'undefined' && cuberData.oll) ? cuberData.oll : [];
+        if (casosOLL.length > 0) {
+            const caso = casosOLL[Math.floor(Math.random() * casosOLL.length)];
+            const alg  = caso.algs ? caso.algs[0] : (caso.alg || '');
+            if (alg) return gerarScrambleInverso(alg);
+        }
+        // Fallback: conjunto representativo de setups OLL
+        const fallbacks = [
+            "R U2 R2 F R F' U2 R' F R F'",
+            "F R U R' U' F' f R U R' U' f'",
+            "R U R' U R U2 R'",
+            "r U R' U R U2 r'",
+            "L' U' L U' L' U2 L",
+            "R' U' R U' R' U2 R",
+            "F U R U' R' F'",
+            "R U2 R2 U' R2 U' R2 U2 R"
+        ];
+        return gerarScrambleInverso(fallbacks[Math.floor(Math.random() * fallbacks.length)]);
+    }
+
+    // --- PLL: inverte um caso PLL aleatório do banco ---
+    if (etapa === 'pll') {
+        const casosPLL = (typeof cuberData !== 'undefined' && cuberData.pll) ? cuberData.pll : [];
+        if (casosPLL.length > 0) {
+            const caso = casosPLL[Math.floor(Math.random() * casosPLL.length)];
+            const alg  = caso.algs ? caso.algs[0] : (caso.alg || '');
+            if (alg) return gerarScrambleInverso(alg);
+        }
+        // Fallback: casos PLL comuns
+        const fallbacks = [
+            "R U R' U' R' F R2 U' R' U' R U R' F'",
+            "R U' R U R U R U' R' U' R2",
+            "M2 U M2 U2 M2 U M2",
+            "R' U R' U' R' U' R' U R U R2",
+            "x R' U R' D2 R U' R' D2 R2 x'",
+            "R U R' F' R U R' U' R' F R2 U' R'",
+            "R2 U R U R' U' R' U' R' U R'",
+            "F R U' R' U' R U R' F' R U R' U' R' F R F'"
+        ];
+        return gerarScrambleInverso(fallbacks[Math.floor(Math.random() * fallbacks.length)]);
+    }
+
+    // Fallback genérico
+    const faces = ['U', 'D', 'R', 'L', 'F', 'B'];
+    const mods  = ['', "'", '2'];
+    const movs  = [];
+    let ult = '';
+    for (let i = 0; i < 20; i++) {
+        let f;
+        do { f = faces[Math.floor(Math.random() * faces.length)]; } while (f === ult);
+        ult = f;
+        movs.push(f + mods[Math.floor(Math.random() * mods.length)]);
+    }
+    return movs.join(' ');
 }
 
 /* ==========================================================================
